@@ -67,5 +67,9 @@ $params.PRODUCT_NAME+".bundle"+Folder separator:K24:12+"Contents"+Folder separat
 
 generate_file_from_template ($1;$in;$out)
 
+$in:="Info.plist"
+$out:="Info.plist"
+
+generate_file_from_template ($1;$in;$out)
 
 

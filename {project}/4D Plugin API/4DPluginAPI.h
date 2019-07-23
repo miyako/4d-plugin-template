@@ -23,44 +23,6 @@
 #ifndef NULL
 #define NULL 0
 #endif
-
-//some external libraries assume first load; include this file after them 
-#if VERSIONWIN
-#ifndef _WINDOWS_
-//need to load winsock2 before windows
-//BSD wrappers
-//#define close closesocket
-//#define TickCount GetTickCount
-//#define getpid GetCurrentProcessId
-//#include <winsock2.h>
-
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "Mswsock.lib")//TransmitFile
-#pragma comment(lib, "Rpcrt4.lib")//UuidCreate
-
-#include <windows.h>
-//#include <iphlpapi.h>
-//#include <icmpapi.h>
-//
-//#pragma comment(lib, "iphlpapi.lib")
-//#include <time.h>
-//#include <mmsystem.h>
-//#pragma comment(lib, "winmm.lib")
-#endif
-#else
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/ip.h>
-#include <netinet/ip_icmp.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#define SOCKET int
-#define SOCKET_ERROR (-1)
-#define INVALID_SOCKET (SOCKET)(~0)
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1059,6 +1021,10 @@ void         PA_Dial4DAllowXResize         ( PA_Dial4D dialog, char allowResize 
 void         PA_Dial4DAllowYResize         ( PA_Dial4D dialog, char allowResize );
 void         PA_Dial4DGetWindowMinMaxInfo  ( PA_Dial4D dialog, PA_long32* minXresize, PA_long32* maxXresize, PA_long32* minYresize, PA_long32* maxYresize );
 void         PA_Dial4DSetWindowSize        ( PA_Dial4D dialog, PA_long32 width, PA_long32 height );
+
+PA_Variable PA_ExecuteCollectionMethod(PA_CollectionRef inCollection, PA_Unichar* funtionName, PA_Variable* parameters, short nbParameters);
+PA_Variable PA_ExecuteObjectMethod(PA_ObjectRef inObject, PA_Unichar* funtionName, PA_Variable* parameters, short nbParameters);
+
 
 #ifdef __cplusplus
 }
