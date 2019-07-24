@@ -1,6 +1,6 @@
 //%attributes = {}
 $params:=New object:C1471
-$params.PRODUCT_NAME:="tidy-html5"
+$params.PRODUCT_NAME:="Input Scope"
 $params.PRODUCT_VERSION:="1.0"
 $params.AUTHOR:="miyako"
 $params.CREATE_DATE:=Current date:C33
