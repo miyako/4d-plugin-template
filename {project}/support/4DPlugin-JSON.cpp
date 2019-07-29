@@ -1,4 +1,4 @@
-#include "4DPlugin-JSON.h"
+﻿#include "4DPlugin-JSON.h"
 
 void json_wconv(const wchar_t *value, CUTF16String *u16) {
     

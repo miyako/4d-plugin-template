@@ -1,4 +1,4 @@
-#ifndef PLUGIN_JSON_H
+﻿#ifndef PLUGIN_JSON_H
 #define PLUGIN_JSON_H
 
 #include "4DPluginAPI.h"
@@ -12,6 +12,8 @@
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
+#else
+#include <Windows.h>
 #endif
 
 typedef std::basic_string<PA_Unichar> CUTF16String;
