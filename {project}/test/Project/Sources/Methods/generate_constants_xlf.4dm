@@ -12,4 +12,4 @@ $constantsJsonPath:=$projectFolder+"constants.json"
 $json:=JSON Parse:C1218(Document to text:C1236($constantsJsonPath;"utf-8"))
 PROCESS 4D TAGS:C816($constantsXlf;$constantsXlf;$params;$json)
 $constantsXlfPath:=$projectFolder+"constants.xlf"
-TEXT TO DOCUMENT:C1237($constantsXlfPath;$constantsXlf;"utf-8")
+TEXT TO DOCUMENT:C1237($constantsXlfPath;$constantsXlf;"utf-8";Document with CRLF:K24:20)

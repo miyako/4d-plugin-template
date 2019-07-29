@@ -30,20 +30,20 @@
 		"height": 787
 	},
 	"Sources/Methods/generate_constants_xlf.4dm": {
-		"left": 181,
-		"top": 318,
-		"width": 720,
-		"height": 374
+		"left": 478,
+		"top": 165,
+		"width": 1129,
+		"height": 762
 	},
 	"Sources/Methods/generate_project_vs.4dm": {
-		"left": 190,
-		"top": 349,
+		"left": 478,
+		"top": 165,
 		"width": 1129,
-		"height": 947
+		"height": 762
 	},
 	"Sources/Methods/generate_project.4dm": {
-		"left": 511,
-		"top": 304,
+		"left": 478,
+		"top": 140,
 		"width": 1129,
 		"height": 787
 	},
@@ -54,10 +54,10 @@
 		"height": 787
 	},
 	"Sources/Methods/generate_file_from_template.4dm": {
-		"left": 746,
-		"top": 141,
-		"width": 861,
-		"height": 830
+		"left": 478,
+		"top": 165,
+		"width": 1129,
+		"height": 762
 	},
 	"Sources/Methods/generate_project_plugin_stub.4dm": {
 		"left": 500,

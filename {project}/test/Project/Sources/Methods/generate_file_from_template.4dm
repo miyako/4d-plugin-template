@@ -31,7 +31,7 @@ If (Test path name:C476($filePath)=Is a document:K24:1)
 	End if 
 	
 	If ($withBom)
-		TEXT TO DOCUMENT:C1237($filePath;$template;"utf-8")
+		TEXT TO DOCUMENT:C1237($filePath;$template;"utf-8";Document with CRLF:K24:20)
 	Else 
 		CONVERT FROM TEXT:C1011($template;"utf-8";$data)
 		BLOB TO DOCUMENT:C526($filePath;$data)

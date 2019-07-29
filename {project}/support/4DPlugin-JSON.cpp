@@ -145,6 +145,25 @@ void ob_set_s(PA_ObjectRef obj, const wchar_t *_key, const char *_value) {
     }
 }
 
+void ob_set_a(PA_ObjectRef obj, const wchar_t *_key, CUTF16String *value) {
+    
+    if(obj)
+    {
+            PA_Variable v = PA_CreateVariable(eVK_Unistring);
+            CUTF16String ukey;
+            json_wconv(_key, &ukey);
+ 
+            PA_Unistring key = PA_CreateUnistring((PA_Unichar *)ukey.c_str());
+            PA_Unistring uvalue = PA_CreateUnistring((PA_Unichar *)value->c_str());
+            
+            PA_SetStringVariable(&v, &uvalue);
+            PA_SetObjectProperty(obj, &key, v);
+            
+            PA_DisposeUnistring(&key);
+            PA_ClearVariable(&v);
+    }
+}
+
 void ob_set_a(PA_ObjectRef obj, const wchar_t *_key, const wchar_t *_value) {
     
     if(obj)
@@ -277,7 +296,7 @@ bool ob_is_defined(PA_ObjectRef obj, const wchar_t *_key) {
     return is_defined;
 }
 
-bool ob_get_a(PA_ObjectRef obj, const wchar_t *_key, CUTF8String *value) {
+bool ob_get_s(PA_ObjectRef obj, const wchar_t *_key, CUTF8String *value) {
     
     bool is_defined = false;
     
@@ -337,6 +356,33 @@ bool ob_get_a(PA_ObjectRef obj, const wchar_t *_key, CUTF8String *value) {
     return is_defined;
 }
 
+bool ob_get_a(PA_ObjectRef obj, const wchar_t *_key, CUTF16String *value) {
+    
+    bool is_defined = false;
+    
+    if(obj)
+    {
+        CUTF16String ukey;
+        json_wconv(_key, &ukey);
+        PA_Unistring key = PA_CreateUnistring((PA_Unichar *)ukey.c_str());
+        is_defined = PA_HasObjectProperty(obj, &key);
+        
+        if(is_defined)
+        {
+            PA_Variable v = PA_GetObjectProperty(obj, &key);
+            if(PA_GetVariableKind(v) == eVK_Unistring)
+            {
+                PA_Unistring uvalue = PA_GetStringVariable(v);
+                *value = CUTF16String(uvalue.fString, uvalue.fLength);
+            }
+        }
+        
+        PA_DisposeUnistring(&key);
+    }
+    
+    return is_defined;
+}
+
 bool ob_get_b(PA_ObjectRef obj, const wchar_t *_key) {
     
     bool value = false;
@@ -384,6 +430,30 @@ double ob_get_n(PA_ObjectRef obj, const wchar_t *_key) {
         PA_DisposeUnistring(&key);
     }
     
+    return value;
+}
+
+PA_ObjectRef ob_get_o(PA_ObjectRef obj, const wchar_t *_key) {
+
+    PA_ObjectRef value = NULL;
+    
+    if(obj)
+    {
+        CUTF16String ukey;
+        json_wconv(_key, &ukey);
+        PA_Unistring key = PA_CreateUnistring((PA_Unichar *)ukey.c_str());
+        
+        if(PA_HasObjectProperty(obj, &key))
+        {
+            PA_Variable v = PA_GetObjectProperty(obj, &key);
+            if(PA_GetVariableKind(v) == eVK_Object)
+            {
+                value = PA_GetObjectVariable(v);
+            }
+        }
+        
+        PA_DisposeUnistring(&key);
+    }
     return value;
 }
 
