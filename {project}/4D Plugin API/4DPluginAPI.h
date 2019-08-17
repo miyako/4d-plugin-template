@@ -126,8 +126,8 @@ PA_Unistring     PA_JsonStringify( PA_Variable value, char prettyPrint );
 // ---------------------------------------------------------------
 //The collections are manipulated by reference
 PA_CollectionRef PA_CreateCollection(void);
-PA_Variable  	 PA_GetCollectionElement(PA_CollectionRef collection, long index);
-void		 	 PA_SetCollectionElement(PA_CollectionRef collection, long index, PA_Variable value);
+PA_Variable  	 PA_GetCollectionElement(PA_CollectionRef collection, PA_long32 index);
+void		 	 PA_SetCollectionElement(PA_CollectionRef collection, PA_long32 index, PA_Variable value);
 void             PA_DisposeCollection(PA_CollectionRef collection);
 PA_long32		 PA_GetCollectionLength(PA_CollectionRef collection);
 
