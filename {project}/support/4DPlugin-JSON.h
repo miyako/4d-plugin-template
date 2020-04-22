@@ -1,4 +1,4 @@
-﻿#ifndef PLUGIN_JSON_H
+#ifndef PLUGIN_JSON_H
 #define PLUGIN_JSON_H
 
 #include "4DPluginAPI.h"
@@ -30,9 +30,18 @@ void ob_set_a(PA_ObjectRef obj, const wchar_t *_key, CUTF16String *value);
 void ob_set_a(PA_ObjectRef obj, const wchar_t *_key, const wchar_t *_value);
 
 void ob_set_c(PA_ObjectRef obj, const wchar_t *_key, PA_CollectionRef value);
+
 void ob_set_o(PA_ObjectRef obj, const wchar_t *_key, PA_ObjectRef value);
+void ob_set_o(PA_ObjectRef obj, const char *_key, PA_ObjectRef value);
+
 void ob_set_i(PA_ObjectRef obj, const wchar_t *_key, PA_long32 value);
+
 void ob_set_n(PA_ObjectRef obj, const wchar_t *_key, double value);
+void ob_set_n(PA_ObjectRef obj, const char *_key, double value);
+
+void ob_set_0(PA_ObjectRef obj, const wchar_t *_key);
+void ob_set_0(PA_ObjectRef obj, const char *_key);
+
 void ob_set_b(PA_ObjectRef obj, const wchar_t *_key, bool value);
 
 bool ob_is_defined(PA_ObjectRef obj, const wchar_t *_key);

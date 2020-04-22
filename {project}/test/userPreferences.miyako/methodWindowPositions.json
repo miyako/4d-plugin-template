@@ -154,5 +154,11 @@
 		"top": 163,
 		"width": 877,
 		"height": 662
+	},
+	"Sources/Methods/update_manifest_json.4dm": {
+		"left": 173,
+		"top": 458,
+		"width": 1129,
+		"height": 787
 	}
 }
