@@ -30,6 +30,7 @@ void ob_set_a(PA_ObjectRef obj, const wchar_t *_key, CUTF16String *value);
 void ob_set_a(PA_ObjectRef obj, const wchar_t *_key, const wchar_t *_value);
 
 void ob_set_c(PA_ObjectRef obj, const wchar_t *_key, PA_CollectionRef value);
+void ob_set_c(PA_ObjectRef obj, const char *_key, PA_CollectionRef value);
 
 void ob_set_o(PA_ObjectRef obj, const wchar_t *_key, PA_ObjectRef value);
 void ob_set_o(PA_ObjectRef obj, const char *_key, PA_ObjectRef value);
@@ -47,7 +48,7 @@ void ob_set_b(PA_ObjectRef obj, const wchar_t *_key, bool value);
 bool ob_is_defined(PA_ObjectRef obj, const wchar_t *_key);
 
 bool ob_get_s(PA_ObjectRef obj, const wchar_t *_key, CUTF8String *value);
-
+bool ob_get_d(PA_ObjectRef obj, const wchar_t *_key, short *dd, short *mm, short *yyyy);
 bool ob_get_a(PA_ObjectRef obj, const wchar_t *_key, CUTF16String *value);
 
 bool ob_get_b(PA_ObjectRef obj, const wchar_t *_key);
