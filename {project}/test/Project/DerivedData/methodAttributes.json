@@ -22,10 +22,10 @@
 			}
 		},
 		"update_manifest_json": {
-			"timeStamp": "2022-01-13T03:48:31.972Z",
+			"timeStamp": "2022-08-19T14:23:17.050Z",
 			"attributes": {
 				"invisible": true,
-				"preemptive": "capable"
+				"preemptive": "incapable"
 			}
 		},
 		"generate_project_xcode": {
@@ -36,7 +36,7 @@
 			}
 		},
 		"generate_project": {
-			"timeStamp": "2022-08-19T08:34:27.663Z"
+			"timeStamp": "2022-08-19T14:22:36.024Z"
 		},
 		"generate_project_vs": {
 			"timeStamp": "2022-01-13T03:48:31.972Z",
