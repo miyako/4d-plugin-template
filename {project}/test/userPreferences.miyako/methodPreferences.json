@@ -1,4 +1,4 @@
-﻿{
+{
 	"Sources/Methods/generate_project_xcode.4dm": {
 		"startSelection": 0,
 		"endSelection": 0,
@@ -27,40 +27,40 @@
 		"stamp": "2019-07-24T08:49:03.338Z"
 	},
 	"Sources/Methods/generate_project.4dm": {
-		"startSelection": 14,
-		"endSelection": 14,
-		"firstSelectedLine": 8,
-		"lastSelectedLine": 8,
+		"startSelection": 17,
+		"endSelection": 17,
+		"firstSelectedLine": 7,
+		"lastSelectedLine": 7,
 		"folding": [],
 		"bookmarks": [],
-		"stamp": "2019-07-24T08:02:39.000Z"
+		"stamp": "2022-08-19T08:34:27.663Z"
 	},
 	"Sources/Methods/generate_project_source.4dm": {
-		"startSelection": 18,
-		"endSelection": 18,
-		"firstSelectedLine": 5,
-		"lastSelectedLine": 5,
+		"startSelection": 20,
+		"endSelection": 20,
+		"firstSelectedLine": 7,
+		"lastSelectedLine": 7,
 		"folding": [],
 		"bookmarks": [],
-		"stamp": "2019-07-02T14:36:13.407Z"
+		"stamp": "2022-01-13T03:48:31.972Z"
 	},
 	"Sources/Methods/generate_file_from_template.4dm": {
-		"startSelection": 12,
-		"endSelection": 12,
-		"firstSelectedLine": 32,
-		"lastSelectedLine": 32,
+		"startSelection": 0,
+		"endSelection": 0,
+		"firstSelectedLine": 0,
+		"lastSelectedLine": 0,
 		"folding": [],
 		"bookmarks": [],
-		"stamp": "2019-07-29T04:26:04.720Z"
+		"stamp": "2022-01-13T03:48:31.972Z"
 	},
 	"Sources/Methods/generate_project_plugin_stub.4dm": {
-		"startSelection": 33,
-		"endSelection": 33,
-		"firstSelectedLine": 48,
-		"lastSelectedLine": 48,
+		"startSelection": 25,
+		"endSelection": 25,
+		"firstSelectedLine": 66,
+		"lastSelectedLine": 66,
 		"folding": [],
 		"bookmarks": [],
-		"stamp": "2019-07-02T14:18:29.030Z"
+		"stamp": "2022-01-13T03:48:31.972Z"
 	},
 	"Sources/Methods/generate_project_infoplist.4dm": {
 		"startSelection": 17,
@@ -189,12 +189,12 @@
 		"stamp": "2019-07-07T00:13:49.000Z"
 	},
 	"Sources/Methods/update_manifest_json.4dm": {
-		"startSelection": 44,
-		"endSelection": 44,
-		"firstSelectedLine": 10,
-		"lastSelectedLine": 10,
+		"startSelection": 0,
+		"endSelection": 0,
+		"firstSelectedLine": 0,
+		"lastSelectedLine": 0,
 		"folding": [],
 		"bookmarks": [],
-		"stamp": "2019-12-13T04:37:40.619Z"
+		"stamp": "2022-01-13T03:48:31.972Z"
 	}
 }

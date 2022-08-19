@@ -24,7 +24,7 @@
     C_OBJECT:C1216($command)
     ARRAY LONGINT:C221($pos;0)
     ARRAY LONGINT:C221($len;0)
---><!--#4DLOOP $commands-->$4DEVAL($command:=$commands{$commands})<!--#4DIF (Match regex:C1019("([^\\u0028]+)";$command.syntax;1;$pos;$len))-->$4DEVAL($commandSyntax:=Substring:C12($command.syntax;$pos{1};$len{1}))
+--><!--#4DLOOP $commands-->$4DEVAL($command:=$commands{$commands})<!--#4DIF (Match regex:C1019("([^\\u0028\\u003A]+)";$command.syntax;1;$pos;$len))-->$4DEVAL($commandSyntax:=Substring:C12($command.syntax;$pos{1};$len{1}))
 void $4DEVAL(Replace string:C233($commandSyntax;" ";"_"))(PA_PluginParameters params);<!--#4DENDIF--><!--#4DENDLOOP-->
 
 #endif /* $4DEVAL($1.FILENAME)_H */

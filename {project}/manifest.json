@@ -1,0 +1,11 @@
+{
+    "name": "My First Plugin",
+    "id": 20000,
+    "commands": [
+        {
+            "theme": "Theme 1",
+            "syntax": "My First Plugin Command:J",
+            "threadSafe": true
+        }
+    ]
+}

@@ -1,4 +1,4 @@
-﻿{
+{
 	"Sources/DatabaseMethods/onStartup.4dm": {
 		"left": 322,
 		"top": 651,
@@ -42,28 +42,28 @@
 		"height": 762
 	},
 	"Sources/Methods/generate_project.4dm": {
-		"left": 478,
-		"top": 140,
+		"left": 377,
+		"top": 557,
 		"width": 1129,
-		"height": 787
+		"height": 759
 	},
 	"Sources/Methods/generate_project_source.4dm": {
-		"left": 511,
-		"top": 304,
+		"left": 204,
+		"top": 195,
 		"width": 1129,
 		"height": 787
 	},
 	"Sources/Methods/generate_file_from_template.4dm": {
-		"left": 478,
-		"top": 165,
+		"left": 204,
+		"top": 223,
 		"width": 1129,
-		"height": 762
+		"height": 759
 	},
 	"Sources/Methods/generate_project_plugin_stub.4dm": {
-		"left": 500,
-		"top": 130,
-		"width": 720,
-		"height": 399
+		"left": 181,
+		"top": 271,
+		"width": 1129,
+		"height": 759
 	},
 	"Sources/Methods/generate_project_infoplist.4dm": {
 		"left": 305,

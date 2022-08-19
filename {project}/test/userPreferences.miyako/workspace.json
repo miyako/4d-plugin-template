@@ -1,12 +1,3 @@
-﻿{
-	"editors": [
-		{
-			"type": "method",
-			"id": 2147483644,
-			"codeDescriptor": {
-				"type": 1,
-				"methodName": "update_manifest_json"
-			}
-		}
-	]
+{
+	"editors": []
 }
