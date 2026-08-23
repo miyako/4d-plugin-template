@@ -2226,13 +2226,13 @@ security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN
 
 **Notarytool credentials:** Store in the keychain with `xcrun notarytool store-credentials "notarytool-profile"`, then use `--keychain-profile "notarytool-profile" --keychain "$KEYCHAIN_PATH"` for submissions.
 
-**Signing order (inside-out):** embedded dylibs → plugin binary → bundle. All with `--options runtime --timestamp`.
+**Signing:** Use a single `codesign --verbose --deep --timestamp --force --options=runtime --sign "$IDENTITY"` call on the bundle. The `--deep` flag recursively signs all embedded Mach-O binaries (including third-party dylibs). Do NOT sign individual components inside-out then sign the bundle — this leaves the bundle in an inconsistent state and causes "No such process" errors.
+
+**Verification:** Do NOT use `codesign --verify --deep --strict` on bundles containing third-party dylibs (e.g., Oracle, OpenSSL) or Windows binaries (`.4DX`, `.dll`). The verify traverses the full bundle tree and fails with "No such process" on non-standard structures — even when the signing itself succeeded. Notarytool validates the signature during submission, so a separate verify step is unnecessary.
 
 **Release artifacts:** Create both `.zip` (cross-platform bundle) and `.dmg` (mac-friendly, can be stapled). Notarize both, staple the dmg. Publish with `softprops/action-gh-release@v2`.
 
-**Third-party dylibs:** must be re-signed with Developer ID (not ad-hoc) before notarization. Ad-hoc signatures (`codesign -fs -`) are only for local development builds.
-
-**Cross-platform bundles and `--deep`:** 4D plugin bundles often contain both macOS (`Contents/MacOS/`) and Windows (`Contents/Windows64/`) binaries. Do NOT use `codesign --verify --deep --strict` on such bundles — `--deep` traverses into `Contents/Windows64/` and fails on non-Mach-O files (`.4DX`, `.dll`) with "No such process". Use `codesign -dvv` to display signature info instead. Notarytool will validate the signature during submission.
+**Ad-hoc vs Developer ID:** Ad-hoc signatures (`codesign -fs -`) are only for local development builds. CI release builds must use Developer ID for notarization to succeed.
 
 ### 27. CI/CD: vendored third-party libraries
 
