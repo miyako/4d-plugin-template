@@ -1,3 +1,7 @@
+---
+applyTo: "**"
+---
+
 # 4D Plugin Development Guide
 
 A comprehensive reference for building a 4D plugin from scratch in C/C++. This document captures the full workflow, conventions, caveats, and tips needed to create, build, test, and ship a 4D plugin on macOS and Windows.
