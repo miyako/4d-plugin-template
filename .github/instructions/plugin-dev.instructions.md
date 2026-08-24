@@ -712,7 +712,7 @@ When creating a 4D test project from scratch (without the 4D IDE), the following
 }
 ```
 
-Set `compatibilityVersion` to match your target 4D version. See [version encoding](#automated-testing-with-tool4d).
+Set `compatibilityVersion` to match your target 4D version. See [version encoding](#4dproject-file).
 
 #### `catalog.4DCatalog`
 
