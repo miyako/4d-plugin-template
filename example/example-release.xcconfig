@@ -1,2 +1,0 @@
-// Release.xcconfig
-CONFIGURATION_BUILD_DIR = $(PROJECT_DIR)/$(PROJECT_NAME)-test/Plugins
