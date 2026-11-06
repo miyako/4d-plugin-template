@@ -9,3 +9,4 @@ example/cmake-build/
 .DS_Store
 example/.vs/*
 example/example/x64/*
+**/__pycache__/

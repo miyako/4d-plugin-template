@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "canonical_config": "templates/plugin-pipeline/example.json",
+  "canonical_workflows": ["bump-version.yml.in", "test.yml.in", "release.yml.in"],
+  "generated_config": ".github/plugin-pipeline.json",
+  "generated_contract": ".github/plugin-pipeline-contract.json",
+  "ownership_manifest": ".github/plugin-pipeline-generated.json",
+  "managed_gitignore": "additive root section; fingerprint excludes user patterns",
+  "managed_gitattributes": "additive final root section; source resources, VERSION and LICENSE text eol=lf",
+  "replacement_modes": ["--update-managed", "--replace-managed", "--replace-legacy-workflows"],
+  "publication_helper": "python3 scripts/publish_release.py --directory .signed-distribution --output .publish-extracted",
+  "handoff_helper": "scripts/verify_release.py",
+  "handoff_output_location": "configured build_dir",
+  "pipeline_license": "scripts/PIPELINE-LICENSE.txt",
+  "ci_enforcement": "python3 scripts/check_pipeline.py before configure, package validation, release authorization, signing and publication",
+  "reference": {
+    "repository": "miyako/4d-plugin-get-icon",
+    "commit": "67f6ccbfe0fe8f61480e9a8397b076d19f66e033"
+  },
+  "workflows": {
+    "bump-version.yml": {
+      "name": "Bump version",
+      "events": ["workflow_dispatch"],
+      "jobs": {"bump": []},
+      "permissions": {"contents": "write"}
+    },
+    "test.yml": {
+      "name": "Build and Test",
+      "events": ["push", "pull_request", "workflow_dispatch", "workflow_call"],
+      "jobs": {"test": [], "package-layout": ["test"]},
+      "permissions": {"contents": "read"}
+    },
+    "release.yml": {
+      "name": "Build and Release",
+      "events": ["workflow_dispatch"],
+      "jobs": {"authorize": [], "build": ["authorize"], "sign-package": ["build"], "publish": ["sign-package"]},
+      "permissions": {"contents": "read"}
+    }
+  },
+  "checkout_ref": "${{ github.sha }}",
+  "artifact_scope": "same-run",
+  "release_tag": "vVERSION",
+  "release_inputs": [],
+  "signing_credentials_job": "sign-package",
+  "production_verifier": "scripts/verify_distribution.py --directory --output",
+  "tool4d_inputs": ["project", "startup_method"],
+  "tool4d_success": "exact PASS line and zero exit status"
+}
