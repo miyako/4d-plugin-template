@@ -1269,18 +1269,78 @@ jobs:
 
 ### Required GitHub Secrets for Release
 
-The `release.yml` workflow requires the following repository secrets configured in **Settings → Secrets and variables → Actions**:
+The `release.yml` **template above** uses the following repository secrets, configured in **Settings → Secrets and variables → Actions**. Before recommending or setting credentials, inspect the **actual target repository's workflow** and repository guidance: unsigned or Windows-only workflows may need none. This tutorial's `main` branch currently has no release workflow; the template is not an instruction to add secrets here.
 
 | Secret | Description |
 |---|---|
-| `APPLE_DEVELOPER_ID_CERTIFICATE` | Base64-encoded `.p12` Developer ID Application certificate. Export from Keychain Access, then encode: `base64 -i certificate.p12 \| pbcopy` |
+| `APPLE_DEVELOPER_ID_CERTIFICATE` | Base64-encoded Developer ID Application `.p12` certificate **including its private key** |
 | `APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12` file |
-| `KEYCHAIN_PASSWORD` | Arbitrary password for the temporary keychain created on the runner (can be any random string) |
-| `NOTARYTOOL_APPLE_ID` | Your Apple ID email address (used for notarization) |
+| `KEYCHAIN_PASSWORD` | Independent password for the temporary CI keychain, not the `.p12` or Apple account password |
+| `NOTARYTOOL_APPLE_ID` | Apple account email authorized for notarization |
 | `NOTARYTOOL_TEAM_ID` | Your Apple Developer Team ID (10-character alphanumeric, visible in Apple Developer portal) |
-| `NOTARYTOOL_PASSWORD` | App-specific password generated at [appleid.apple.com](https://appleid.apple.com/account/manage) → Sign-In and Security → App-Specific Passwords |
+| `NOTARYTOOL_PASSWORD` | Apple **app-specific password**, not the account password; generate at [appleid.apple.com](https://appleid.apple.com/account/manage) → Sign-In and Security → App-Specific Passwords |
 
-**Note:** The `test.yml` and `bump-version.yml` workflows do NOT require any secrets. Only `release.yml` needs them for code signing and notarization.
+The `test.yml` and `bump-version.yml` templates do not require these signing secrets. Some target workflows additionally use `CODESIGN_APPLE_ID`: this is a Developer ID Application **signing identity or certificate SHA-1 fingerprint**, **not an email address**. The helper below sets exactly the six table entries, not this additional secret; follow the target workflow for any other requirements.
+
+#### User-run credential setup
+
+**Agents may inspect only names and timestamps** with `gh secret list --repo OWNER/REPO`. Never run the helper, `gh secret set`, or credential/Keychain commands as an agent; never read credential values or Keychain items, choose a certificate, or ask for secrets in chat. The user chooses the certificate and runs uploads in their own terminal. Never print, log, commit, or send secret values in chat; do not enable shell tracing (`set -x`).
+
+1. Inspect the actual workflow first, then check names and timestamps:
+
+   ```sh
+   gh secret list --repo OWNER/REPO
+   ```
+
+2. If that workflow needs the six secrets, use the tracked [helper](../../scripts/set-release-secrets.sh) from the **tutorial checkout root**. It requires macOS, zsh, the `security` CLI, OpenSSL, and an authenticated GitHub CLI with permission to set repository secrets. No particular `~/.copilot` installation is needed.
+
+   For first-time setup with no stored certificate, export a **Developer ID Application certificate with its private key** as `.p12` from Keychain Access. The user chooses the file and its export password:
+
+   ```sh
+   CERT_P12=/path/to/DeveloperID.p12 ./scripts/set-release-secrets.sh OWNER/REPO
+   ```
+
+   The helper stores values in the macOS login Keychain under service `4d-plugin-release`, using each exact secret name as its account. Missing non-certificate values are entered twice through hidden Keychain input. Keep the login Keychain available as the user's default Keychain.
+
+3. For another repository, **reuse the existing service and certificate** rather than assuming each repo needs a new certificate:
+
+   ```sh
+   ./scripts/set-release-secrets.sh OWNER/REPO
+   ./scripts/set-release-secrets.sh OWNER/REPO OWNER/SECOND-REPO
+   ```
+
+   Only use the user-selected `CERT_P12` override when no certificate is stored or when replacing it. The helper opens the certificate with the stored password, displays its subject and expiry, and asks the user to confirm before uploading. It does **not** explicitly verify private-key presence, enforce the Developer ID Application certificate type, or reject expired certificates. The user must check these; a successful helper run is not proof that signing/notarization will succeed.
+
+4. To replace a stored value, the **user** deletes the item by **service and account**, not its display name, and reruns the helper:
+
+   ```sh
+   security delete-generic-password -s 4d-plugin-release -a SECRET_NAME
+   ./scripts/set-release-secrets.sh OWNER/REPO
+   ```
+
+   Replace `SECRET_NAME` with the exact table entry. For certificate replacement, rerun with the user-selected `CERT_P12` path. If the export password changes, also replace `APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD`. Replacing shared local items affects future uploads to any repo using the service; it does not automatically change secrets already uploaded elsewhere.
+
+5. After the user reports completion, check secret names and timestamps again. Uploads overwrite the six target repository secrets sequentially; a failure may leave a partially updated repo or set of repos. Resolve the reported error and rerun for the intended targets. **Credential setup is not release permission**: publication requires separate user authorization. Follow actual workflow filenames, dispatch inputs, tags, and triggers; do not infer a `release.yml`, `tag` input, `v` prefix, or PAT requirement from these templates.
+
+The helper temporarily decodes the certificate into a restrictive-permission file (`umask 077`) and removes it on exit. Secret values are passed to `gh secret set` via stdin, never printed by the helper. macOS Keychain writes use the `security` CLI; its command-line interface is not a guarantee against local process inspection. Run only in a trusted user terminal, not CI or an agent session.
+
+#### Credential troubleshooting
+
+- **Missing or misnamed secrets:** for `SecKeychainItemImport: Unable to decode`, first check the target workflow's exact secret names and their timestamps. Missing/misnamed credentials are not plugin source-code failures; do not patch source code to fix them.
+- **Certificate/password mismatch:** an incorrect passphrase during import, or the helper's inability to open the stored certificate, may mean the `.p12` and password do not match. The user replaces the relevant service/account item or supplies the correct user-selected `CERT_P12`, then checks new repository secret timestamps.
+- **Legacy PKCS#12 encryption:** OpenSSL 3 can reject legacy RC2/3DES encryption. The helper retries certificate inspection with `-legacy`; LibreSSL may not support this flag. If both attempts fail, check the pair and the installed OpenSSL implementation; the user may need OpenSSL 3 with its legacy provider or a compatible re-export. The helper's generic failure does not distinguish these causes.
+- **Local Keychain access:** failed lookups can also reflect a locked/inaccessible Keychain, not just absent items. The helper prompts for a missing non-certificate value only on `security`'s item-not-found status (44); other lookup errors stop setup with an explicit diagnostic. Resolve local access errors before replacing credentials. Writes and uploads stop on errors; never treat failure as successful setup.
+
+This section is the canonical setup guidance; the tracked script is its implementation, not a second skill copy. Synchronizing an installed local skill/wrapper can be a later, separately authorized step; do not edit installed `~/.copilot/skills` files as part of repository setup.
+
+Maintainers can validate the bundled helper without real credential operations:
+
+```sh
+zsh -n scripts/set-release-secrets.sh
+python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+```
+
+The tests use isolated mocked `security`, `gh`, and `openssl` commands and synthetic dummy values only.
 
 ### CI Caveats
 
@@ -1295,7 +1355,7 @@ The `release.yml` workflow requires the following repository secrets configured 
 
 ## README Template
 
-Generate a `README.md` in the project root with the following structure. Replace `{name}`, `{description}`, command signatures, and examples with the actual plugin details.
+Generate a `README.md` in the project root with the following structure. Replace `{name}`, `{description}`, command signatures, and examples with the actual plugin details. Adapt the CI/CD and secrets sections to the actual workflows: the signing example below is not mandatory for unsigned or Windows-only projects.
 
 ````markdown
 # {name}
@@ -1410,12 +1470,12 @@ Configure these in **Settings → Secrets and variables → Actions**:
 
 | Secret | Description |
 |---|---|
-| `APPLE_DEVELOPER_ID_CERTIFICATE` | Base64-encoded `.p12` Developer ID Application certificate |
+| `APPLE_DEVELOPER_ID_CERTIFICATE` | Base64-encoded Developer ID Application `.p12` including its private key |
 | `APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD` | Password for the `.p12` export |
-| `KEYCHAIN_PASSWORD` | Arbitrary password for the CI runner's temporary keychain |
+| `KEYCHAIN_PASSWORD` | Independent password for the CI runner's temporary keychain |
 | `NOTARYTOOL_APPLE_ID` | Apple ID email for notarization |
 | `NOTARYTOOL_TEAM_ID` | Apple Developer Team ID (10-char alphanumeric) |
-| `NOTARYTOOL_PASSWORD` | App-specific password from [appleid.apple.com](https://appleid.apple.com/account/manage) |
+| `NOTARYTOOL_PASSWORD` | Apple app-specific password, not the account password |
 
 ## License
 
@@ -2198,18 +2258,9 @@ Native library handles and pointers are `void*` (8 bytes on 64-bit) but `PA_long
 
 ### 26. CI/CD: macOS codesigning and notarization
 
-All plugin projects use the same GitHub Actions repository secrets for macOS codesigning and notarization:
+For the signing template's exact secret names, user-run helper, Keychain reuse, and credential troubleshooting, see [Required GitHub Secrets for Release](#required-github-secrets-for-release). Inspect each target workflow; not all plugin projects require Apple credentials.
 
-| Secret | Description |
-|--------|-------------|
-| `APPLE_DEVELOPER_ID_CERTIFICATE` | Base64-encoded Developer ID Application `.p12` certificate |
-| `APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD` | Password for the `.p12` file |
-| `KEYCHAIN_PASSWORD` | Password for the temporary CI keychain |
-| `NOTARYTOOL_APPLE_ID` | Apple ID email for `xcrun notarytool` |
-| `NOTARYTOOL_PASSWORD` | App-specific password (generate at appleid.apple.com → Sign-In and Security → App-Specific Passwords) |
-| `NOTARYTOOL_TEAM_ID` | 10-character Apple Developer Team ID |
-
-**Workflow structure:** Two separate workflows:
+**Example workflow structure** (follow the target repository's actual workflows and triggers):
 - `build.yml` — compile + verify on every push/PR. No signing, no artifacts.
 - `release.yml` — build both platforms + codesign + notarize + GitHub Release. Triggers on `v*.*.*` tags or manual `workflow_dispatch`.
 
