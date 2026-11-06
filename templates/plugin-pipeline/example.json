@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "product": "example",
+  "source_dir": "example",
+  "build_dir": "example/build",
+  "test_project": "example/example-test/Project/example.4DProject",
+  "startup_method": "test_all",
+  "sdk_dir": "4D-Plugin-SDK",
+  "bundle_identifier": "com.4d.example",
+  "macos_deployment_target": "11.0",
+  "release_branch": "main",
+  "signing_environment": "release-signing",
+  "profile": "macos-universal-windows-x64",
+  "signing_policy": "developer-id",
+  "native_tests": false,
+  "dependencies": []
+}

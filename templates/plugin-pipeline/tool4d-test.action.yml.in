@@ -1,0 +1,88 @@
+name: Test with tool4d
+description: Run the project-compatible runtime and require an exact PASS line.
+inputs:
+  project:
+    description: Relative path to the 4D project
+    required: true
+  startup_method:
+    description: 4D startup method
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Download tool4d
+      shell: bash
+      env:
+        TEST_PROJECT: ${{ inputs.project }}
+        STARTUP_METHOD: ${{ inputs.startup_method }}
+      run: |
+        set -euo pipefail
+        version=$(python3 - <<'PY'
+        import json, os, pathlib, re
+        project = os.environ["TEST_PROJECT"]
+        if not re.fullmatch(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_.-]+)*\.4DProject", project):
+            raise SystemExit("Unsafe project path")
+        path = pathlib.Path(project)
+        if any(p in (".", "..") or p.startswith((".", "-")) for p in project.split("/")):
+            raise SystemExit("Unsafe project path")
+        if not path.resolve().is_relative_to(pathlib.Path.cwd().resolve()):
+            raise SystemExit("Project escapes workspace")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,30}", os.environ["STARTUP_METHOD"]):
+            raise SystemExit("Unsafe startup method")
+        compat = str(json.loads(path.read_text())["compatibilityVersion"])
+        if not re.fullmatch(r"[0-9]{2}[0-9A-F][0-9]", compat):
+            raise SystemExit("Unsupported compatibilityVersion")
+        major = int(compat[:2])
+        minor = int(compat[2], 16) * 10 + int(compat[3])
+        if minor >= 10 and minor % 10:
+            raise SystemExit("Unsupported compatibilityVersion")
+        version = f"{major}.{minor}" if minor < 10 else f"{major} R{minor // 10}"
+        print(f"{major}.x/{version.replace(' ', '%20')}")
+        PY
+        )
+        case "$RUNNER_OS" in
+          macOS)
+            platform=mac
+            case "$(uname -m)" in
+              arm64) archive=tool4d_arm64.tar.xz ;;
+              x86_64) archive=tool4d_x86_64.tar.xz ;;
+              *) exit 1 ;;
+            esac ;;
+          Windows) platform=win; archive=tool4d_win.tar.xz ;;
+          *) exit 1 ;;
+        esac
+        mkdir -p .local-tools
+        curl --fail --location --silent --show-error \
+          "https://resources-download.4d.com/release/$version/latest/$platform/$archive" \
+          -o .local-tools/tool4d.tar.xz
+        tar xJf .local-tools/tool4d.tar.xz -C .local-tools
+    - name: Test (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        TEST_PROJECT: ${{ inputs.project }}
+        STARTUP_METHOD: ${{ inputs.startup_method }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$(dirname "$(dirname "$TEST_PROJECT")")/Resources"
+        .local-tools/tool4d.app/Contents/MacOS/tool4d --dataless \
+          "--startup-method=$STARTUP_METHOD" "--project=$PWD/$TEST_PROJECT" \
+          2>&1 | tee .local-tools/test.log
+        grep -qx PASS .local-tools/test.log
+    - name: Test (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        TEST_PROJECT: ${{ inputs.project }}
+        STARTUP_METHOD: ${{ inputs.startup_method }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $project = (Resolve-Path $env:TEST_PROJECT).Path
+        $root = Split-Path (Split-Path $project -Parent) -Parent
+        New-Item -ItemType Directory -Force "$root/Resources" | Out-Null
+        $runtimes = @(Get-ChildItem .local-tools -Filter tool4d.exe -Recurse)
+        if ($runtimes.Count -ne 1) { throw "Expected exactly one tool4d.exe" }
+        $output = & $runtimes[0].FullName --dataless "--startup-method=$env:STARTUP_METHOD" "--project=$project" 2>&1
+        $exitCode = $LASTEXITCODE
+        $output | Write-Output
+        if ($exitCode -ne 0 -or !($output -cmatch '^PASS$')) { throw "4D integration failed" }

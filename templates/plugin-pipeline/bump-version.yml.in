@@ -1,0 +1,69 @@
+name: Bump version
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        description: Semantic version bump
+        options: [patch, minor, major]
+        default: patch
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bump-version-@@RELEASE_BRANCH@@
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require an explicit default-branch dispatch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]
+          [ "$DEFAULT_BRANCH" = '@@RELEASE_BRANCH@@' ]
+          [ "$GITHUB_REF" = 'refs/heads/@@RELEASE_BRANCH@@' ]
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Bump VERSION and commit without creating tags
+        id: bump
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          CURRENT=$(cat VERSION)
+          [[ "$CURRENT" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "$MODE" in
+            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH+1)) ;;
+            *) echo "::error::Unknown bump mode"; exit 1 ;;
+          esac
+          NEW="${MAJOR}.${MINOR}.${PATCH}"
+          set +e
+          git ls-remote --exit-code origin "refs/tags/v$NEW"
+          status=$?
+          set -e
+          [ "$status" -eq 2 ] || { echo "::error::Tag exists or lookup failed"; exit 1; }
+          printf '%s\n' "$NEW" > VERSION
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git commit -m "chore: bump version to $NEW" \
+            -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+          git push origin HEAD:refs/heads/@@RELEASE_BRANCH@@
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+      - name: Summary
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          echo "Bumped VERSION to $VERSION. Dispatch Build and Release from @@RELEASE_BRANCH@@ to publish v$VERSION." >> "$GITHUB_STEP_SUMMARY"

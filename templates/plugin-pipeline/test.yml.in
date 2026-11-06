@@ -1,0 +1,121 @@
+name: Build and Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    env:
+      NATIVE_TESTS: '@@NATIVE_TESTS@@'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+          - os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+          fetch-depth: 0
+      - name: Verify pipeline ownership
+        run: python3 scripts/check_pipeline.py
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: cmake -S @@SOURCE_DIR@@ -B @@BUILD_DIR@@ -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=@@MACOS_DEPLOYMENT_TARGET@@
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cmake -S @@SOURCE_DIR@@ -B @@BUILD_DIR@@ -A x64
+      - name: Build
+        id: build
+        run: cmake --build @@BUILD_DIR@@ --config Release --parallel
+      - name: Native tests
+        if: env.NATIVE_TESTS == 'true'
+        run: ctest --test-dir @@BUILD_DIR@@ -C Release --output-on-failure
+      - name: Package provenance and release checks tests
+        shell: bash
+        env:
+          TMPDIR: ${{ github.workspace }}/@@BUILD_DIR@@
+        run: |
+          set -euo pipefail
+          for suite in test_package.py test_release_checks.py test_sign_package.py test_publish_release.py test_verify_release.py test_pipeline_contract.py; do
+            python3 -m unittest discover -s scripts/tests -p "$suite" -v
+          done
+      - name: 4D integration
+        uses: ./.github/actions/tool4d-test
+        with:
+          project: @@TEST_PROJECT@@
+          startup_method: @@STARTUP_METHOD@@
+      - name: Stage tested native input (macOS)
+        if: runner.os == 'macOS'
+        run: python3 scripts/package.py stage --platform macos --output .package-inputs
+      - name: Stage tested native input (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python3 scripts/package.py stage --platform windows --output .package-inputs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ runner.os == 'macOS' && 'macos' || 'windows' }}-${{ github.sha }}
+          path: .package-inputs/${{ runner.os == 'macOS' && 'macos' || 'windows' }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 2
+  package-layout:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+          fetch-depth: 0
+      - name: Verify pipeline ownership
+        run: python3 scripts/check_pipeline.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-macos-${{ github.sha }}
+          path: .package-inputs/macos
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-windows-${{ github.sha }}
+          path: .package-inputs/windows
+      - name: Validate same-run cross-platform assembly
+        run: |
+          set -euo pipefail
+          python3 scripts/package.py assemble --inputs .package-inputs --output .package-validation
+          # This ad-hoc seal is test-only; production requires Developer ID.
+          codesign --force --sign - ".package-validation/payload/@@PRODUCT@@.bundle"
+          codesign --verify --strict ".package-validation/payload/@@PRODUCT@@.bundle"
+          python3 scripts/package.py inventory --payload .package-validation/payload --output .package-validation/payload/PROVENANCE.json
+          python3 scripts/package.py verify --payload .package-validation/payload --manifest .package-validation/payload/PROVENANCE.json
+      - name: Exercise ZIP and DMG layout
+        run: |
+          set -euo pipefail
+          ditto -c -k --sequesterRsrc .package-validation/payload .package-validation/layout.zip
+          ditto -x -k .package-validation/layout.zip .package-validation/extracted
+          python3 scripts/package.py verify --payload .package-validation/extracted --manifest .package-validation/extracted/PROVENANCE.json
+          hdiutil create -format UDZO -volname @@PRODUCT@@ -srcfolder .package-validation/payload .package-validation/layout.dmg
+          mkdir .package-validation/mounted
+          hdiutil attach -nobrowse -readonly -mountpoint "$PWD/.package-validation/mounted" .package-validation/layout.dmg
+          trap 'hdiutil detach "$PWD/.package-validation/mounted"' EXIT
+          python3 scripts/package.py verify --payload .package-validation/mounted --manifest .package-validation/mounted/PROVENANCE.json
+          mkdir -p @@TEST_ROOT@@/Plugins
+          [ ! -e "@@TEST_ROOT@@/Plugins/@@PRODUCT@@.bundle" ]
+          [ ! -L "@@TEST_ROOT@@/Plugins/@@PRODUCT@@.bundle" ]
+          ditto .package-validation/extracted/@@PRODUCT@@.bundle @@TEST_ROOT@@/Plugins/@@PRODUCT@@.bundle
+      - name: Smoke test combined plugin from extracted ZIP
+        uses: ./.github/actions/tool4d-test
+        with:
+          project: @@TEST_PROJECT@@
+          startup_method: @@STARTUP_METHOD@@

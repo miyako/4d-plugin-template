@@ -1,0 +1,49 @@
+Pipeline packaging and release checks are adapted from
+https://github.com/miyako/4d-plugin-get-icon
+Pinned commit: 67f6ccbfe0fe8f61480e9a8397b076d19f66e033
+Reference files: scripts/package.py, scripts/release_checks.py,
+scripts/sign-package.sh, scripts/test_package.py,
+scripts/test_release_checks.py, .github/workflows/release.yml.
+Tutorial adaptations load .github/plugin-pipeline.json rather than assuming
+the reference product, source paths, branch, or signing environment.
+
+ZIP creation deliberately uses ditto --norsrc --noextattr instead of the
+reference's --sequesterRsrc. The baseline payload is regular files only:
+the Mach-O contains its embedded signature, and the bundle's signed resource
+seal is Contents/_CodeSignature/CodeResources. Both are inventoried and retained,
+along with Info.plist and every resource. No resource forks or extended
+attributes are part of this baseline contract. AppleDouble/__MACOSX metadata is
+not portable and is rejected rather than silently extracted. Final verification
+checks all archived file hashes, the bundle and executable strict signatures,
+the expected Apple team and hardened runtime before installed smoke testing.
+This native post-extraction gate fails if any required signature bytes were
+omitted; hermetic tests prove the complete regular-file inventory is retained.
+
+verify_release.py performs only metadata verification. It reads initial run
+metadata, delegates any wait to one bounded gh run watch --exit-status command,
+then reads fresh consolidated metadata. It never dispatches, retries, merges,
+or publishes. metadata_verified is not distribution_verified: downloaded bytes,
+signatures, notarization, stapling, Gatekeeper and installed tests remain gates
+in the production workflow and shared verify_distribution.py helper.
+
+MIT License
+
+Copyright (c) 2026 Keisuke Miyako
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
