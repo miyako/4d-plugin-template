@@ -25,9 +25,11 @@ required. Repository rules must permit the bump to push to the default branch;
 otherwise update `VERSION` through a reviewed PR.
 
 Normal builds have read-only contents permission and no signing secrets.
-Signing runs in the configured release environment; publication alone receives
-write permission. Configure default-branch deployment restrictions and
-reviewers as appropriate. Credentials are not authorization to publish.
+Signing runs in the configured release environment; within the release workflow,
+only publication receives write permission. The separate bump workflow needs
+write permission to commit `VERSION`. Configure default-branch deployment
+restrictions and reviewers as appropriate. Credentials are not authorization
+to publish.
 
 ## Generate, do not reinvent
 
@@ -125,18 +127,12 @@ sidecars; required signed regular files remain in the exact inventory. This
 allows fail-closed extraction without treating arbitrary `__MACOSX` files as
 accepted payload. The DMG retains the normal macOS container acceptance path.
 
-## Credentials and skill alignment
+## Credentials
 
 Use the [canonical user-run credential instructions](../.github/instructions/plugin-dev.instructions.md#required-github-secrets-for-release).
 They define the same six secrets used by the reference signing job and preserve
 the `4d-plugin-release` local service. Never execute the credential helper as an
 agent, read values, or modify installed skills as part of project generation.
-
-At the reviewed baseline, the installed `add-release-secrets-to-repo` skill
-agrees on names, user-only setup and separate publication permission. Its local
-helper predates PR #17: canonical source adds tool prerequisites and distinguishes
-item-not-found from inaccessible Keychain errors. Thus compatibility is not
-byte-for-byte synchronization. Any installed-copy update is separately authorized.
 
 ## Offline checks and release handoff
 
