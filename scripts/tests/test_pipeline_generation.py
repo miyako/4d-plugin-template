@@ -728,6 +728,126 @@ class PipelineGenerationTests(unittest.TestCase):
         )
         self.assert_rendered_contract()
 
+    def static_dependencies(self, windows="vcpkg"):
+        return {
+            "profile": "static", "windows": windows, "notices_dir": "THIRD-PARTY-NOTICES",
+            "allowed_licenses": ["LGPL-2.1-or-later", "MIT"],
+            "copyleft_acknowledged": ["LGPL-2.1-or-later"],
+            "components": {
+                "glib": {"license": "LGPL-2.1-or-later", "notice": "glib.txt", "platforms": ["windows"]},
+                "brotli": {"license": "MIT", "notice": "brotli.txt", "platforms": ["macos", "windows"]},
+            },
+        }
+
+    def test_baseline_render_has_no_dependency_content(self):
+        files = self.rendered()
+        test = files[".github/workflows/test.yml"].decode()
+        for marker in ("vcpkg", "timeout-minutes", "@@IF", "@@ELSE", "@@ENDIF"):
+            self.assertNotIn(marker, test)
+        self.assertFalse([name for name in files if name.startswith("vcpkg-triplets/")])
+        self.assertNotIn(b"THIRD-PARTY-NOTICES", files[".gitattributes"])
+
+    def test_static_vcpkg_profile_renders_cached_pinned_install(self):
+        self.config["dependencies"] = self.static_dependencies()
+        files = self.rendered()
+        self.assert_rendered_contract(files)
+        triplet = files["vcpkg-triplets/x64-windows-static-release.cmake"].decode()
+        for line in ("set(VCPKG_TARGET_ARCHITECTURE x64)", "set(VCPKG_CRT_LINKAGE static)",
+                     "set(VCPKG_LIBRARY_LINKAGE static)", "set(VCPKG_BUILD_TYPE release)"):
+            self.assertIn(line, triplet)
+        self.assertIn("set(VCPKG_BUILD_TYPE release)",
+                      files["vcpkg-triplets/x64-windows-release-host.cmake"].decode())
+        attributes = files[".gitattributes"].decode()
+        for rule in ("THIRD-PARTY-NOTICES/** text eol=lf", "vcpkg.json text eol=lf",
+                     "vcpkg-triplets/*.cmake text eol=lf"):
+            self.assertIn(rule, attributes)
+        workflow = parsed(files)["test.yml"]
+        self.assertEqual(workflow["jobs"]["test"]["timeout-minutes"], "360")
+        baseline = named(workflow, "test", "Resolve pinned vcpkg baseline (Windows)")
+        self.assertIn("scripts/package.py vcpkg-baseline", baseline["run"])
+        restore = named(workflow, "test", "Restore vcpkg binary cache (Windows)")
+        self.assertTrue(restore["uses"].startswith("actions/cache/restore@"))
+        self.assertIn("steps.vcpkg.outputs.baseline", restore["with"]["key"])
+        self.assertIn("hashFiles('vcpkg.json', 'vcpkg-triplets/**')", restore["with"]["key"])
+        install = named(workflow, "test", "Install static dependencies (Windows)")
+        for fragment in ("checkout --quiet --detach $env:VCPKG_BASELINE", "--triplet x64-windows-static-release",
+                         "--host-triplet x64-windows-release-host", "--overlay-triplets=vcpkg-triplets",
+                         "--x-install-root=example/build/vcpkg_installed"):
+            self.assertIn(fragment, install["run"])
+        save = named(workflow, "test", "Save vcpkg binary cache (Windows)")
+        self.assertTrue(save["uses"].startswith("actions/cache/save@"))
+        self.assertIn("cache-hit != 'true'", save["if"])
+        names = [step.get("name") for step in steps(workflow, "test")]
+        self.assertLess(names.index("Save vcpkg binary cache (Windows)"), names.index("Configure (Windows)"))
+        configure = named(workflow, "test", "Configure (Windows)")["run"]
+        for fragment in ("-A x64", "scripts/buildsystems/vcpkg.cmake", "-DVCPKG_TARGET_TRIPLET=x64-windows-static-release",
+                         "-DVCPKG_MANIFEST_INSTALL=OFF"):
+            self.assertIn(fragment, configure)
+        self.assertNotIn("-G", configure.split())
+        generator.generate(self.config, self.output, root=self.fixture)
+        generator.generate(self.config, self.output, check=True, root=self.fixture)
+        (self.output / "vcpkg-triplets/x64-windows-static-release.cmake").write_text("set(VCPKG_CRT_LINKAGE dynamic)\n")
+        with self.assertRaises(ValueError):
+            generator.generate(self.config, self.output, check=True, root=self.fixture)
+
+    def test_static_profile_without_vcpkg_keeps_baseline_workflows(self):
+        baseline = self.rendered()
+        self.config["dependencies"] = self.static_dependencies(windows="none")
+        files = self.rendered()
+        self.assert_rendered_contract(files)
+        for name in (".github/workflows/test.yml", ".github/workflows/release.yml",
+                     ".github/workflows/bump-version.yml"):
+            self.assertEqual(files[name], baseline[name])
+        self.assertFalse([name for name in files if name.startswith("vcpkg-triplets/")])
+        self.assertIn(b"THIRD-PARTY-NOTICES/** text eol=lf", files[".gitattributes"])
+
+    def test_condition_markers_fail_closed(self):
+        enabled = {"VCPKG": True}
+        self.assertEqual(generator.apply_conditions(
+            "a\n@@IF:VCPKG@@\nb\n@@ELSE:VCPKG@@\nc\n@@ENDIF:VCPKG@@\nd\n", enabled, "t"), "a\nb\nd\n")
+        self.assertEqual(generator.apply_conditions(
+            "a\n@@IF:VCPKG@@\nb\n@@ELSE:VCPKG@@\nc\n@@ENDIF:VCPKG@@\nd\n", {"VCPKG": False}, "t"), "a\nc\nd\n")
+        for text in ("@@IF:OTHER@@\n@@ENDIF:OTHER@@\n", "@@IF:VCPKG@@\nb\n",
+                     "@@ENDIF:VCPKG@@\n", "@@IF:VCPKG@@\n@@IF:VCPKG@@\n@@ENDIF:VCPKG@@\n@@ENDIF:VCPKG@@\n",
+                     "@@IF:VCPKG@@\n@@ENDIF:OTHER@@\n", "  @@IF:VCPKG@@ trailing\n@@ENDIF:VCPKG@@\n",
+                     "@@ELSE:VCPKG@@\n"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                generator.apply_conditions(text, enabled, "t")
+
+    def test_unsafe_dependency_profiles(self):
+        def mutate(change):
+            dependencies = self.static_dependencies()
+            change(dependencies)
+            return dependencies
+        cases = {
+            "unknown field": mutate(lambda d: d.update(overlay_ports=["ports"])),
+            "profile": mutate(lambda d: d.update(profile="dynamic")),
+            "windows": mutate(lambda d: d.update(windows="conan")),
+            "agpl": mutate(lambda d: d.update(allowed_licenses=["AGPL-3.0-or-later", "LGPL-2.1-or-later", "MIT"])),
+            "unacknowledged": mutate(lambda d: d.update(copyleft_acknowledged=[])),
+            "stale acknowledgement": mutate(lambda d: d.update(
+                copyleft_acknowledged=["GPL-2.0-only", "LGPL-2.1-or-later"])),
+            "license not allowed": mutate(lambda d: d["components"]["brotli"].update(license="BSD-3-Clause")),
+            "dangling operator": mutate(lambda d: d["components"]["brotli"].update(license="MIT AND")),
+            "bad with": mutate(lambda d: d["components"]["brotli"].update(license="(MIT) WITH x")),
+            "notice traversal": mutate(lambda d: d["components"]["brotli"].update(notice="../x.txt")),
+            "port name": mutate(lambda d: d["components"].update({"Bad_Name": d["components"].pop("glib")})),
+            "platforms": mutate(lambda d: d["components"]["glib"].update(platforms=["windows", "macos"])),
+            "notices in build": mutate(lambda d: d.update(notices_dir="example/build/notices")),
+            "notices absolute": mutate(lambda d: d.update(notices_dir="/notices")),
+            "no components": mutate(lambda d: d.update(components={})),
+            "vcpkg without windows": mutate(lambda d: d["components"]["glib"].update(platforms=["macos"])
+                                            or d["components"]["brotli"].update(platforms=["macos"])),
+        }
+        for label, dependencies in cases.items():
+            config = copy.deepcopy(self.config)
+            config["dependencies"] = dependencies
+            with self.subTest(label=label), self.assertRaises(ValueError):
+                generator.validate_config(config)
+        config = copy.deepcopy(self.config)
+        config["dependencies"] = self.static_dependencies()
+        generator.validate_config(config)
+
     def test_unsafe_config(self):
         cases = {
             "schema": [True, 2, "1"],

@@ -43,6 +43,20 @@ FIELDS = {
     "native_tests", "dependencies",
 }
 PLACEHOLDER = re.compile(r"@@([A-Z_]+)@@")
+CONDITION = re.compile(r"[ \t]*@@(IF|ELSE|ENDIF):([A-Z_]+)@@[ \t]*")
+DEPENDENCY_FIELDS = {
+    "profile", "windows", "notices_dir", "allowed_licenses", "copyleft_acknowledged", "components",
+}
+SPDX_ID = r"[A-Za-z0-9][A-Za-z0-9.+-]{0,63}"
+COPYLEFT = r"L?GPL-"
+PORT_NAME = r"[a-z0-9][a-z0-9-]{0,63}"
+NOTICE_FILE = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
+NOTICES_DIR = r"[A-Za-z0-9][A-Za-z0-9_-]*(?:/[A-Za-z0-9][A-Za-z0-9_.-]*)*"
+# Conditional outputs are rendered only when their condition is enabled.
+CONDITIONAL_FILES = {
+    "vcpkg-x64-windows-static-release.cmake": ("VCPKG", "vcpkg-triplets/x64-windows-static-release.cmake"),
+    "vcpkg-x64-windows-release-host.cmake": ("VCPKG", "vcpkg-triplets/x64-windows-release-host.cmake"),
+}
 MANIFEST = ".github/plugin-pipeline-generated.json"
 IGNORE_BEGIN = b"# BEGIN 4D PLUGIN PIPELINE (managed)"
 IGNORE_END = b"# END 4D PLUGIN PIPELINE (managed)"
@@ -121,8 +135,6 @@ def validate_config(config):
         raise ValueError("Unsupported schema")
     if type(config["native_tests"]) is not bool:
         raise ValueError("native_tests must be boolean")
-    if config["dependencies"] != [] or type(config["dependencies"]) is not list:
-        raise ValueError("Dependencies are not supported by this profile")
     if config["profile"] != "macos-universal-windows-x64":
         raise ValueError("Unsupported profile")
     if config["signing_policy"] != "developer-id":
@@ -167,7 +179,137 @@ def validate_config(config):
         raise ValueError("sdk_dir must not overlap source_dir")
     if build == project or build in project.parents or project in build.parents:
         raise ValueError("build_dir must not overlap test_project")
+    validate_dependencies(config)
     return config
+
+
+def license_ids(expression):
+    """SPDX ids in a license expression; operators and exceptions are not licenses."""
+    if not isinstance(expression, str) or not 0 < len(expression) <= 256:
+        raise ValueError("Invalid SPDX license expression")
+    invalid = ValueError(f"Invalid SPDX license expression: {expression}")
+    ids, depth, operand, exception, after_id = [], 0, True, False, False
+    for token in re.findall(r"[()]|[^\s()]+", expression):
+        licence = False
+        if token == "(":
+            if not operand or exception:
+                raise invalid
+            depth += 1
+        elif token == ")":
+            if operand or not depth:
+                raise invalid
+            depth -= 1
+        elif token in ("AND", "OR", "WITH"):
+            if operand or (token == "WITH" and not after_id):
+                raise invalid
+            operand, exception = True, token == "WITH"
+        else:
+            if not operand or not re.fullmatch(SPDX_ID, token) or token == "NOASSERTION":
+                raise invalid
+            if not exception:
+                ids.append(token)
+                licence = True
+            operand, exception = False, False
+        after_id = licence
+    if operand or depth:
+        raise invalid
+    return ids
+
+
+def sorted_unique(value, field):
+    if (not isinstance(value, list) or not all(isinstance(item, str) for item in value)
+            or value != sorted(set(value))):
+        raise ValueError(f"dependencies.{field} must be a sorted list of unique strings")
+    return value
+
+
+def validate_dependencies(config):
+    dependencies = config["dependencies"]
+    if type(dependencies) is list and not dependencies:
+        return None
+    if not isinstance(dependencies, dict) or set(dependencies) != DEPENDENCY_FIELDS:
+        raise ValueError("dependencies must be [] or a static dependency profile object")
+    if dependencies["profile"] != "static":
+        raise ValueError("Unsupported dependency profile")
+    if dependencies["windows"] not in ("vcpkg", "none"):
+        raise ValueError("dependencies.windows must be vcpkg or none")
+    notices = dependencies["notices_dir"]
+    if not isinstance(notices, str) or not re.fullmatch(NOTICES_DIR, notices) or any(
+            part.endswith(".") for part in notices.split("/")):
+        raise ValueError("Unsafe dependencies.notices_dir")
+    for field in ("build_dir", "sdk_dir"):
+        other = PurePosixPath(config[field])
+        path = PurePosixPath(notices)
+        if path == other or other in path.parents or path in other.parents:
+            raise ValueError(f"dependencies.notices_dir must not overlap {field}")
+    allowed = sorted_unique(dependencies["allowed_licenses"], "allowed_licenses")
+    if not allowed:
+        raise ValueError("dependencies.allowed_licenses must not be empty")
+    for license in allowed:
+        if not re.fullmatch(SPDX_ID, license) or license == "NOASSERTION":
+            raise ValueError(f"Invalid SPDX license id: {license}")
+        if license.upper().startswith("AGPL"):
+            raise ValueError(f"AGPL is not distributable as a statically linked plugin: {license}")
+    acknowledged = sorted_unique(dependencies["copyleft_acknowledged"], "copyleft_acknowledged")
+    components = dependencies["components"]
+    if not isinstance(components, dict) or not components:
+        raise ValueError("dependencies.components must be a non-empty object")
+    used, windows = set(), False
+    for name, component in components.items():
+        if not re.fullmatch(PORT_NAME, name) or name.startswith("vcpkg-"):
+            raise ValueError(f"Invalid dependency component name: {name!r}")
+        if not isinstance(component, dict) or set(component) != {"license", "notice", "platforms"}:
+            raise ValueError(f"Component {name} must define exactly license, notice and platforms")
+        ids = license_ids(component["license"])
+        for license in ids:
+            if license not in allowed:
+                raise ValueError(f"Component {name} license is not allowed: {license}")
+        used.update(ids)
+        notice = component["notice"]
+        if (not isinstance(notice, str) or not re.fullmatch(NOTICE_FILE, notice)
+                or notice.endswith(".")):
+            raise ValueError(f"Unsafe notice file for component {name}")
+        platforms = sorted_unique(component["platforms"], "platforms")
+        if not platforms or not set(platforms) <= {"macos", "windows"}:
+            raise ValueError(f"Component {name} platforms must be macos and/or windows")
+        windows = windows or "windows" in platforms
+    copyleft = {license for license in used if re.match(COPYLEFT, license)}
+    if set(acknowledged) != copyleft:
+        raise ValueError("dependencies.copyleft_acknowledged must list exactly the GPL/LGPL "
+                         f"licenses used by components: {sorted(copyleft)}")
+    if dependencies["windows"] == "vcpkg" and not windows:
+        raise ValueError("A vcpkg profile requires at least one Windows component")
+    return dependencies
+
+
+def conditions(config):
+    dependencies = config["dependencies"]
+    return {"VCPKG": isinstance(dependencies, dict) and dependencies["windows"] == "vcpkg"}
+
+
+def apply_conditions(text, enabled, template):
+    """Keep or drop whole marker-delimited line blocks; markers never nest."""
+    output, active, state = [], None, None
+    for line in text.splitlines(keepends=True):
+        match = CONDITION.fullmatch(line.rstrip("\r\n"))
+        if match:
+            kind, name = match.groups()
+            if name not in enabled:
+                raise ValueError(f"Unknown template condition in {template}: {name}")
+            if kind == "IF" and active is None:
+                active, state = name, "if"
+            elif kind == "ELSE" and active == name and state == "if":
+                state = "else"
+            elif kind == "ENDIF" and active == name:
+                active, state = None, None
+            else:
+                raise ValueError(f"Malformed template condition in {template}: {line.strip()}")
+            continue
+        if active is None or (state == "if") == enabled[active]:
+            output.append(line)
+    if active is not None:
+        raise ValueError(f"Unterminated template condition in {template}: {active}")
+    return "".join(output)
 
 
 def render(config, root=ROOT):
@@ -178,13 +320,18 @@ def render(config, root=ROOT):
     values["NATIVE_TESTS"] = "true" if config["native_tests"] else "false"
     project = PurePosixPath(config["test_project"])
     values["TEST_ROOT"] = str(project.parent.parent)
+    enabled = conditions(config)
+    selected = dict(TEMPLATE_FILES)
+    selected.update({template: destination for template, (condition, destination)
+                     in CONDITIONAL_FILES.items() if enabled[condition]})
     result = {}
-    for template, destination in TEMPLATE_FILES.items():
+    for template, destination in selected.items():
         if template == "REFERENCE.txt":
             result[destination] = (templates / template).read_bytes()
             continue
         text = (templates / template).read_text(encoding="utf-8")
         if template.endswith(".in"):
+            text = apply_conditions(text, enabled, template)
             def replace(match):
                 key = match.group(1)
                 if key not in values:
@@ -210,6 +357,11 @@ def render(config, root=ROOT):
         f"{config['source_dir']}/constants.xlf text eol=lf",
         "VERSION text eol=lf", "LICENSE text eol=lf",
     ]
+    dependencies = config["dependencies"]
+    if isinstance(dependencies, dict):
+        attributes.append(f"{dependencies['notices_dir']}/** text eol=lf")
+        if enabled["VCPKG"]:
+            attributes += ["vcpkg.json text eol=lf", "vcpkg-triplets/*.cmake text eol=lf"]
     result[".gitattributes"] = (
         ATTR_BEGIN + b"\n" + "\n".join(attributes).encode() + b"\n" + ATTR_END + b"\n"
     )
