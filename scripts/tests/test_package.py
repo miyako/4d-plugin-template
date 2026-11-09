@@ -35,6 +35,31 @@ DETAILS = (
 )
 
 
+def make_pe(imports=("KERNEL32.dll",), delay=(), machine=0x8664, magic=0x20B):
+    """Synthetic PE32+ with one .idata section; machine at 68 and magic at 88."""
+    rva, raw = 0x1000, 0x200
+    body = bytearray(20 * (len(imports) + 1) + 32 * (len(delay) + 1))
+    delay_start = 20 * (len(imports) + 1)
+    for index, name in enumerate((*imports, *delay)):
+        field = 20 * index + 12 if index < len(imports) else delay_start + 32 * (index - len(imports)) + 4
+        struct.pack_into("<I", body, field, rva + len(body))
+        body += name.encode() + b"\0"
+    pe = bytearray(raw) + body
+    pe[:2] = b"MZ"
+    struct.pack_into("<I", pe, 60, 64)
+    pe[64:68] = b"PE\0\0"
+    struct.pack_into("<HH", pe, 68, machine, 1)
+    struct.pack_into("<H", pe, 84, 240)
+    struct.pack_into("<H", pe, 88, magic)
+    struct.pack_into("<I", pe, 88 + 108, 16)
+    if imports:
+        struct.pack_into("<II", pe, 88 + 112 + 8, rva, 20 * (len(imports) + 1))
+    if delay:
+        struct.pack_into("<II", pe, 88 + 112 + 8 * 13, rva + delay_start, 32 * (len(delay) + 1))
+    struct.pack_into("<IIII", pe, 328 + 8, len(body), rva, len(body), raw)
+    return bytes(pe)
+
+
 def create_source(root, settings=CONFIG):
     (root / ".github").mkdir()
     package.write_json(root / ".github/plugin-pipeline.json", settings)
@@ -61,13 +86,7 @@ def create_source(root, settings=CONFIG):
     win = plugins / f"{product}/Contents"
     (win / "Windows64").mkdir(parents=True)
     (win / "Resources").mkdir()
-    pe = bytearray(90)
-    pe[:2] = b"MZ"
-    struct.pack_into("<I", pe, 60, 64)
-    pe[64:68] = b"PE\0\0"
-    struct.pack_into("<H", pe, 68, 0x8664)
-    struct.pack_into("<H", pe, 88, 0x20B)
-    (win / f"Windows64/{product}.4DX").write_bytes(pe)
+    (win / f"Windows64/{product}.4DX").write_bytes(make_pe())
     for contents in (mac, win):
         for name in ("manifest.json", "constants.xlf"):
             shutil.copyfile(source / name, contents / "Resources" / name)
@@ -95,7 +114,17 @@ class Fixture(unittest.TestCase):
         package.stage("windows", self.inputs)
 
     def export(self, args, cwd=None):
-        return b"SDK license\n" if "-C" in args else b"plugin license\n"
+        if "-C" in args:
+            return b"SDK license\n"
+        if args[:2] == ["git", "ls-tree"]:
+            target = self.root / args[-1]
+            if "-r" not in args:
+                return (args[-1].encode() + b"\n") if target.exists() else b""
+            return b"".join(path.relative_to(self.root).as_posix().encode() + b"\0"
+                            for path in sorted(target.rglob("*")) if path.is_file())
+        if args[:2] == ["git", "show"] and args[2].split(":", 1)[1] != "LICENSE":
+            return (self.root / args[2].split(":", 1)[1]).read_bytes()
+        return b"plugin license\n"
 
     def assemble(self):
         package.assemble(self.inputs, self.output)
@@ -251,6 +280,77 @@ class PackageTests(Fixture):
             path.write_bytes(data)
             with self.assertRaisesRegex(package.PackageError, "AMD64"):
                 package.validate_pe(path)
+
+    def test_pe_system_imports_accepted(self):
+        path = self.root / "system.4DX"
+        path.write_bytes(make_pe(
+            ("KERNEL32.dll", "user32.DLL", "GDI32.dll", "ADVAPI32.dll", "SHELL32.dll", "ole32.dll",
+             "OLEAUT32.dll", "SHLWAPI.dll", "WS2_32.dll", "api-ms-win-crt-runtime-l1-1-0.dll",
+             "api-ms-win-core-synch-l1-2-0.dll"),
+            delay=("ext-ms-win-ntuser-window-l1-1-0.dll", "bcrypt.dll")))
+        self.assertEqual(len(package.validate_pe(path)), 13)
+
+    def test_pe_rejects_runtime_and_third_party_imports(self):
+        path = self.root / "bad.4DX"
+        for name in ("VCRUNTIME140.dll", "vcruntime140_1.dll", "MSVCP140.dll", "msvcp140_atomic_wait.dll",
+                     "CONCRT140.dll", "VCOMP140.DLL", "vccorlib140.dll", "MSVCR120.dll",
+                     "ucrtbased.dll", "VCRUNTIME140D.dll"):
+            for delay in (False, True):
+                path.write_bytes(make_pe(("KERNEL32.dll",), (name,)) if delay
+                                 else make_pe(("KERNEL32.dll", name)))
+                with self.subTest(name=name, delay=delay), \
+                        self.assertRaisesRegex(package.PackageError, "VC\\+\\+ runtime import forbidden"):
+                    package.validate_pe(path)
+        for name in ("cairo-2.dll", "gobject-2.0-0.dll", "poppler-glib.dll", "libcrypto-3-x64.dll",
+                     "zlib1.dll", "kernel32.dll.evil.dll", "api-ms-win-crt-runtime.dll"):
+            path.write_bytes(make_pe(("KERNEL32.dll", name)))
+            with self.subTest(name=name), self.assertRaisesRegex(package.PackageError, "Non-system"):
+                package.validate_pe(path)
+        path.write_bytes(make_pe(("KERNEL32.dll",), ("cairo-2.dll",)))
+        with self.assertRaisesRegex(package.PackageError, "Non-system Windows import: cairo-2.dll"):
+            package.validate_pe(path)
+
+    def test_pe_malformed_import_tables_fail_closed(self):
+        path = self.root / "malformed.4DX"
+        valid = make_pe()
+        cases = {
+            "no imports": (make_pe(()), "no imports"),
+            "truncated": (valid[:300], "optional header|section table"),
+            "unmapped import directory": (None, "Unmapped PE RVA"),
+            "unterminated name": (valid.rstrip(b"\0"), "exceeds file"),
+            "unterminated in section": (valid[:-1] + b"X", "Invalid PE import name"),
+            "non-ascii name": (valid.replace(b"KERNEL32", b"KERN\xc9L32"), "Invalid PE import name"),
+            "path in name": (make_pe(("..\\evil.dll",)), "Invalid PE import name"),
+            "bad e_lfanew": (None, "PE header offset"),
+            "sections": (None, "optional header"),
+        }
+        for label, (data, message) in cases.items():
+            if label == "unmapped import directory":
+                data = bytearray(valid)
+                struct.pack_into("<I", data, 88 + 120, 0x9000)
+            elif label == "bad e_lfanew":
+                data = bytearray(valid)
+                struct.pack_into("<I", data, 60, len(valid) + 4)
+            elif label == "sections":
+                data = bytearray(valid)
+                struct.pack_into("<H", data, 70, 0)
+            path.write_bytes(bytes(data))
+            with self.subTest(case=label), self.assertRaisesRegex(package.PackageError, message):
+                package.validate_pe(path)
+
+    def test_non_system_import_rejected_at_stage_and_assembly(self):
+        source = self.plugins / "get-icon/Contents/Windows64/get-icon.4DX"
+        source.write_bytes(make_pe(("KERNEL32.dll", "cairo-2.dll")))
+        with self.assertRaisesRegex(package.PackageError, "Non-system Windows import"):
+            package.stage("windows", self.root / "other-inputs")
+        staged = self.inputs / "windows/payload" / package.layout()["win"]
+        staged.write_bytes(make_pe(("KERNEL32.dll", "VCRUNTIME140.dll")))
+        manifest = self.inputs / "windows/manifest.json"
+        data = package.read_json(manifest)
+        data["files"] = package.hashes(self.inputs / "windows/payload")
+        package.write_json(manifest, data)
+        with self.assertRaisesRegex(package.PackageError, "VC\\+\\+ runtime"):
+            self.assemble()
 
     def test_plist_identifier(self):
         path = self.inputs / "macos/payload" / package.layout()["plist"]
@@ -470,6 +570,236 @@ class PackageTests(Fixture):
                 else:
                     with self.assertRaises(package.PackageError):
                         self.real_native(Path("fixture"))
+
+
+STATIC = {
+    "profile": "static", "windows": "vcpkg", "notices_dir": "THIRD-PARTY-NOTICES",
+    "allowed_licenses": ["LGPL-2.1-or-later", "MIT", "Zlib"],
+    "copyleft_acknowledged": ["LGPL-2.1-or-later"],
+    "components": {
+        "glib": {"license": "LGPL-2.1-or-later", "notice": "glib.txt", "platforms": ["windows"]},
+        "zlib": {"license": "Zlib", "notice": "zlib.txt", "platforms": ["macos", "windows"]},
+    },
+}
+VCPKG_JSON = {"name": "fixture", "dependencies": ["glib", "zlib"],
+              "builtin-baseline": "c" * 40,
+              "overrides": [{"name": "zlib", "version": "1.3.1"}]}
+
+
+class StaticProfileTests(Fixture):
+    """Static third-party profile: closure, notices, copyleft and pinned vcpkg inputs."""
+
+    def setUp(self):
+        super().setUp()
+        self.settings = {**CONFIG, "dependencies": json.loads(json.dumps(STATIC))}
+        self.write_config()
+        notices = self.root / "THIRD-PARTY-NOTICES"
+        notices.mkdir()
+        (notices / "glib.txt").write_bytes(b"GLib LGPL-2.1-or-later notice\n")
+        (notices / "zlib.txt").write_bytes(b"zlib license notice\n")
+        self.write_vcpkg(VCPKG_JSON)
+        self.installed = self.root / CONFIG["build_dir"] / "vcpkg_installed"
+        self.port("glib", "2.86.0", "LGPL-2.1-or-later")
+        self.port("zlib", "1.3.1", "Zlib")
+        self.port("vcpkg-cmake", "2024-04-23", "MIT")
+        self.port("pkgconf", "2.4.3", "ISC", triplet=package.VCPKG_HOST_TRIPLET)
+        self.inputs = self.root / "static-inputs"
+        self.stage_all()
+
+    def write_config(self):
+        package.write_json(self.root / ".github/plugin-pipeline.json", self.settings)
+
+    def write_vcpkg(self, manifest):
+        (self.root / "vcpkg.json").write_bytes((json.dumps(manifest, indent=2) + "\n").encode())
+
+    def port(self, name, version, license, triplet=package.VCPKG_TRIPLET):
+        info = self.installed / "vcpkg/info"
+        info.mkdir(parents=True, exist_ok=True)
+        (info / f"{name}_{version}_{triplet}.list").write_text(f"{triplet}/share/{name}/\n")
+        share = self.installed / triplet / "share" / name
+        share.mkdir(parents=True, exist_ok=True)
+        package.write_json(share / "vcpkg.spdx.json", {"packages": [
+            {"SPDXID": "SPDXRef-port", "name": name, "versionInfo": version,
+             "licenseConcluded": license},
+            {"SPDXID": "SPDXRef-binary", "name": name, "licenseConcluded": "NOASSERTION"}]})
+
+    def stage_all(self, platforms=("macos", "windows")):
+        if self.inputs.exists():
+            shutil.rmtree(self.inputs)
+        for platform in platforms:
+            package.stage(platform, self.inputs)
+
+    def assert_stage_fails(self, message, platform="windows"):
+        with self.assertRaisesRegex(package.PackageError, message):
+            self.stage_all((platform,))
+
+    def test_static_roundtrip_records_closure_notices_and_pins(self):
+        manifest = package.read_json(self.inputs / "windows/manifest.json")
+        self.assertEqual(manifest["dependencies"], {"triplet": "x64-windows-static-release", "ports": {
+            "glib": {"license": "LGPL-2.1-or-later", "version": "2.86.0"},
+            "zlib": {"license": "Zlib", "version": "1.3.1"}}})
+        self.assertNotIn("dependencies", package.read_json(self.inputs / "macos/manifest.json"))
+        payload = self.signed_payload()
+        package.verify(payload, payload / "PROVENANCE.json")
+        self.assertEqual((payload / "THIRD-PARTY-NOTICES/glib.txt").read_bytes(),
+                         b"GLib LGPL-2.1-or-later notice\n")
+        record = package.read_json(payload / "THIRD-PARTY.json")
+        self.assertEqual(record["vcpkg"]["baseline"], "c" * 40)
+        self.assertEqual(record["vcpkg"]["overrides"], [{"name": "zlib", "version": "1.3.1"}])
+        self.assertEqual(record["vcpkg"]["triplet"], "x64-windows-static-release")
+        self.assertEqual(record["copyleft_acknowledged"], ["LGPL-2.1-or-later"])
+        self.assertEqual(record["components"]["zlib"]["notice"], "THIRD-PARTY-NOTICES/zlib.txt")
+        self.assertIn(BINDING["source_commit"], record["corresponding_source"])
+        data = package.read_json(payload / "PROVENANCE.json")
+        self.assertIn("THIRD-PARTY.json", data["files"])
+
+    def test_windows_closure_must_equal_declared_components(self):
+        self.port("brotli", "1.2.1", "MIT")
+        self.assert_stage_fails("Undeclared vcpkg port in Windows closure: brotli")
+        shutil.rmtree(self.installed)
+        self.port("glib", "2.86.0", "LGPL-2.1-or-later")
+        self.assert_stage_fails(r"missing from vcpkg closure: \['zlib'\]")
+        shutil.rmtree(self.installed)
+        self.assert_stage_fails("Missing vcpkg install metadata")
+
+    def test_windows_closure_license_must_match(self):
+        self.port("zlib", "1.3.1", "GPL-2.0-only")
+        self.assert_stage_fails("vcpkg license for zlib is GPL-2.0-only; declared Zlib")
+        self.port("zlib", "1.3.1", "NOASSERTION")
+        self.stage_all(("windows",))
+        spdx = self.installed / package.VCPKG_TRIPLET / "share/zlib/vcpkg.spdx.json"
+        package.write_json(spdx, {"packages": []})
+        self.assert_stage_fails("Missing vcpkg SPDX port record: zlib")
+
+    def test_macos_only_component_not_required_in_windows_closure(self):
+        self.settings["dependencies"]["components"]["zlib"]["platforms"] = ["macos"]
+        self.write_config()
+        self.assert_stage_fails("Undeclared vcpkg port in Windows closure: zlib")
+        shutil.rmtree(self.installed / "vcpkg/info")
+        self.port("glib", "2.86.0", "LGPL-2.1-or-later")
+        self.stage_all()
+
+    def test_notices_are_exact_and_non_empty(self):
+        notices = self.root / "THIRD-PARTY-NOTICES"
+        (notices / "zlib.txt").unlink()
+        for platform in ("macos", "windows"):
+            self.assert_stage_fails(r"missing=\['zlib.txt'\]", platform)
+        (notices / "zlib.txt").write_bytes(b"\n")
+        self.assert_stage_fails("Empty third-party notice: zlib.txt", "macos")
+        (notices / "zlib.txt").write_bytes(b"zlib license notice\n")
+        (notices / "stale.txt").write_bytes(b"stale\n")
+        self.assert_stage_fails(r"additional=\['stale.txt'\]", "macos")
+
+    def test_pinned_vcpkg_manifest_required(self):
+        bad = [
+            ({k: v for k, v in VCPKG_JSON.items() if k != "builtin-baseline"}, "builtin-baseline"),
+            ({**VCPKG_JSON, "builtin-baseline": "main"}, "builtin-baseline"),
+            ({**VCPKG_JSON, "vcpkg-configuration": {"overlay-ports": ["ports"]}}, "unsupported fields"),
+            ({**VCPKG_JSON, "overrides": [{"name": "zlib", "version>=": "1.3"}]}, "exact versions"),
+            ({**VCPKG_JSON, "overrides": [{"name": "zlib", "version": "1"}] * 2}, "Duplicate"),
+        ]
+        for manifest, message in bad:
+            with self.subTest(message=message):
+                self.write_vcpkg(manifest)
+                self.assert_stage_fails(message)
+                with self.assertRaisesRegex(package.PackageError, message):
+                    package.vcpkg_baseline()
+        self.write_vcpkg(VCPKG_JSON)
+        (self.root / "vcpkg.json").write_bytes((self.root / "vcpkg.json").read_bytes().replace(b"\n", b"\r\n"))
+        self.assert_stage_fails("LF line endings")
+        self.write_vcpkg(VCPKG_JSON)
+        (self.root / "vcpkg-configuration.json").write_text("{}\n")
+        self.assert_stage_fails("vcpkg-configuration.json is forbidden")
+        with self.assertRaisesRegex(package.PackageError, "forbidden"):
+            package.vcpkg_baseline()
+
+    def test_vcpkg_baseline_command(self):
+        with patch("builtins.print") as printed:
+            package.vcpkg_baseline()
+        printed.assert_called_once_with("c" * 40)
+        self.settings["dependencies"]["windows"] = "none"
+        self.write_config()
+        with self.assertRaisesRegex(package.PackageError, "does not enable"):
+            package.vcpkg_baseline()
+
+    def test_windows_none_static_profile_has_no_vcpkg_inputs(self):
+        self.settings["dependencies"]["windows"] = "none"
+        self.write_config()
+        shutil.rmtree(self.installed)
+        (self.root / "vcpkg.json").unlink()
+        self.stage_all()
+        self.assertNotIn("dependencies", package.read_json(self.inputs / "windows/manifest.json"))
+        payload = self.assemble()
+        package.inventory(payload, payload / "PROVENANCE.json")
+        package.verify(payload, payload / "PROVENANCE.json")
+        self.assertIsNone(package.read_json(payload / "THIRD-PARTY.json")["vcpkg"])
+
+    def test_static_payload_tampering_rejected(self):
+        payload = self.assemble()
+        package.inventory(payload, payload / "PROVENANCE.json")
+        for name, message in (("THIRD-PARTY.json", "THIRD-PARTY.json differs"),
+                              ("THIRD-PARTY-NOTICES/glib.txt", "notice mismatch")):
+            with self.subTest(name=name):
+                path = payload / name
+                original = path.read_bytes()
+                path.write_bytes(original + b" ")
+                with self.assertRaisesRegex(package.PackageError, message):
+                    package.validate_payload_content(payload, package.build_provenance(payload))
+                path.write_bytes(original)
+        (payload / "THIRD-PARTY-NOTICES/glib.txt").unlink()
+        with self.assertRaisesRegex(package.PackageError, "layout mismatch"):
+            package.verify(payload, payload / "PROVENANCE.json")
+
+    def test_input_closure_tampering_rejected(self):
+        path = self.inputs / "windows/manifest.json"
+        manifest = package.read_json(path)
+        manifest["dependencies"]["ports"].pop("zlib")
+        package.write_json(path, manifest)
+        with self.assertRaisesRegex(package.PackageError, "closure differs"):
+            self.assemble()
+        manifest.pop("dependencies")
+        package.write_json(path, manifest)
+        with self.assertRaisesRegex(package.PackageError, "Unexpected input manifest fields"):
+            self.assemble()
+
+    def test_dependency_profile_config_rules(self):
+        def mutate(change):
+            dependencies = json.loads(json.dumps(STATIC))
+            change(dependencies)
+            return dependencies
+        bad = {
+            "empty object": {},
+            "non-empty list": ["openssl"],
+            "unknown field": mutate(lambda d: d.update(registry="x")),
+            "dynamic profile": mutate(lambda d: d.update(profile="dynamic")),
+            "windows mode": mutate(lambda d: d.update(windows="conan")),
+            "agpl": mutate(lambda d: d["allowed_licenses"].append("AGPL-3.0-only")),
+            "unsorted": mutate(lambda d: d["allowed_licenses"].reverse()),
+            "unacknowledged": mutate(lambda d: d.update(copyleft_acknowledged=[])),
+            "extra acknowledgement": mutate(lambda d: d["copyleft_acknowledged"].append("GPL-3.0-only")),
+            "disallowed": mutate(lambda d: d["components"]["zlib"].update(license="Apache-2.0")),
+            "expression": mutate(lambda d: d["components"]["zlib"].update(license="Zlib OR")),
+            "noassertion": mutate(lambda d: d["components"]["zlib"].update(license="NOASSERTION")),
+            "port name": mutate(lambda d: d["components"].update(Zlib=d["components"].pop("zlib"))),
+            "helper port": mutate(lambda d: d["components"].update({"vcpkg-cmake": d["components"].pop("zlib")})),
+            "notice path": mutate(lambda d: d["components"]["zlib"].update(notice="../zlib.txt")),
+            "platform": mutate(lambda d: d["components"]["zlib"].update(platforms=["linux"])),
+            "notices overlap": mutate(lambda d: d.update(notices_dir="get-icon/build/notices")),
+            "notices dir": mutate(lambda d: d.update(notices_dir="../notices")),
+            "no windows component": mutate(lambda d: [c.update(platforms=["macos"])
+                                                      for c in d["components"].values()]),
+        }
+        for label, dependencies in bad.items():
+            with self.subTest(label=label):
+                self.settings["dependencies"] = dependencies
+                self.write_config()
+                with self.assertRaises(package.PackageError):
+                    package.config()
+        self.settings["dependencies"] = mutate(lambda d: d["components"]["glib"].update(
+            license="(LGPL-2.1-or-later OR MIT) AND Zlib WITH Autoconf-exception-2.0"))
+        self.write_config()
+        self.assertEqual(package.config()["dependencies"]["components"]["glib"]["license"],
+                         "(LGPL-2.1-or-later OR MIT) AND Zlib WITH Autoconf-exception-2.0")
 
 
 class DistributionTests(Fixture):

@@ -6,7 +6,13 @@
   "generated_contract": ".github/plugin-pipeline-contract.json",
   "ownership_manifest": ".github/plugin-pipeline-generated.json",
   "managed_gitignore": "additive root section; fingerprint excludes user patterns",
-  "managed_gitattributes": "additive final root section; source resources, VERSION and LICENSE text eol=lf",
+  "managed_gitattributes": "additive final root section; source resources, VERSION and LICENSE text eol=lf; static dependency profile adds notices, vcpkg.json and vcpkg-triplets",
+  "dependency_profiles": {
+    "[]": "baseline: system libraries only; Windows 4DX imports only allowlisted system DLLs",
+    "static": "statically linked third-party libraries; payload stays one self-contained Mach-O and one 4DX, with THIRD-PARTY-NOTICES/ and THIRD-PARTY.json",
+    "static.windows=vcpkg": "pinned vcpkg.json builtin-baseline, generated x64-windows-static-release triplet (static CRT, static libraries, release only), vcpkg binary cache in actions/cache; installed ports must be declared components with matching licenses",
+    "copyleft": "GPL-/LGPL- ids require exact copyleft_acknowledged; AGPL is rejected"
+  },
   "replacement_modes": ["--update-managed", "--replace-managed", "--replace-legacy-workflows"],
   "publication_helper": "python3 scripts/publish_release.py --directory .signed-distribution --output .publish-extracted",
   "handoff_helper": "scripts/verify_release.py",

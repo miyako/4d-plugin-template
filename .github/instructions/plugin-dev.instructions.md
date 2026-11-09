@@ -1040,8 +1040,11 @@ The tests use isolated mocked `security`, `gh`, and `openssl` commands and synth
   the bundle, Mach-O and DMG with `codesign --verify --strict`, checks Developer ID
   authority/team/timestamp/runtime, and requires notarization and Gatekeeper
   acceptance. Historical failures involving other bundle layouts do not justify
-  deleting these gates. Bundled third-party dylibs require a separately validated
-  dependency/signing profile; unsupported layouts fail closed.
+  deleting these gates. Third-party libraries must be linked statically through
+  the [static dependency profile](../../docs/plugin-pipeline.md#static-third-party-dependency-profile);
+  bundled dylibs/DLLs are unsupported and fail closed.
+- **Windows imports** — the packaged 4DX may import only system DLLs; the VC++
+  runtime (`VCRUNTIME*`, `MSVCP*`) is rejected, so build with the static CRT (`/MT`).
 
 ---
 
@@ -1914,8 +1917,10 @@ Expected: `isCompliant="true"`, `failedRules="0"`.
 3. **SDK `4DPluginAPI.c` needs warning suppression** on modern compilers (Pitfall #21)
 4. **`PA_GetUnistring`** is the correct function name, not `PA_GetUnistringPtr` (Pitfall #22)
 5. **catalog.4DCatalog** must have `base.dtd`, `name`, `uuid`, `DEFAULT_SCHEMA`, `journal_file` (Pitfall #19)
-6. **Generated CI:** Use the canonical three-workflow contract. A PoDoFo
-   dependency profile needs explicit validation before generation; the baseline
+6. **Generated CI:** Use the canonical three-workflow contract. Link PoDoFo
+   statically through the
+   [static dependency profile](../../docs/plugin-pipeline.md#static-third-party-dependency-profile)
+   (vcpkg on Windows), with notices and license acknowledgments; the baseline
    supports only system-library linking.
 7. **Version and release:** Commit `VERSION`, then explicitly dispatch release;
    do not add a PAT or manual tag step.
@@ -1975,8 +1980,10 @@ layouts, never a production fallback.
 
 Large third-party binaries (e.g., Oracle Instant Client, database drivers, crypto libraries) often cannot be committed to the repo due to licensing or size. Store them as GitHub Release assets under a dedicated tag (e.g., `vendor-libs`):
 
-Generated CI requires an explicitly validated dependency profile before these
-assets can be enabled; do not add ad-hoc download steps to generated workflows.
+Generated CI supports only statically linked third-party libraries through the
+[static dependency profile](../../docs/plugin-pipeline.md#static-third-party-dependency-profile);
+prebuilt runtime libraries that must ship beside the plugin are unsupported. Do
+not add ad-hoc download steps to generated workflows.
 
 - Create platform-specific tarballs (e.g., `libs-macos-aarm64.tar.gz`, `libs-windows-x64.tar.gz`)
 - CI downloads them with `gh release download <tag>`. No extra secrets needed — `GITHUB_TOKEN` has read access to the repo's own releases.

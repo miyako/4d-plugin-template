@@ -91,17 +91,32 @@ and signing environment. Values are validated before rendering; arbitrary shell
 commands and GitHub expressions are not configuration.
 
 The supported baseline is universal macOS plus Windows x64, Developer ID signed
-and notarized macOS, and explicitly unsigned Windows. Unsupported platforms,
-signing policies or third-party dependency profiles fail closed. This is not an
-unsigned fallback. Adding another profile requires architecture, dependency
-closure, license/provenance, packaging and signing acceptance tests; do not
-weaken the baseline to accommodate it.
+and notarized macOS, and explicitly unsigned Windows, with `dependencies: []`.
+The only other dependency profile is the
+[static third-party profile](#static-third-party-dependency-profile).
+Unsupported platforms, signing policies or dependency profiles fail closed.
+This is not an unsigned fallback. Adding another profile requires architecture,
+dependency closure, license/provenance, packaging and signing acceptance tests;
+do not weaken the baseline to accommodate it.
 
 Invariants include immutable dispatch SHA and SDK gitlink, clean checkout,
 immutable LF `VERSION`, same-run tested artifacts, portable exact layouts,
 matching resource bytes, architecture/dependency checks and immutable licenses.
 Reject symlinks, unsafe paths, case collisions, missing/additional/tampered
 files and conflicting version tags.
+
+The exact layouts ship one Mach-O and one `.4DX`, so both must load with only
+operating-system libraries. macOS binaries may link only `/usr/lib` and
+`/System/Library` and have no `LC_RPATH`. Windows binaries are parsed without
+running external tools: the 4DX must be AMD64 PE32+, and every entry in its
+import and delay-import tables must be a system DLL on the `package.py`
+allowlist (for example `KERNEL32`, `USER32`, `GDI32`, `ADVAPI32`, `SHELL32`,
+`OLE32`, `OLEAUT32`, `SHLWAPI`, `WS2_32`, `CRYPT32`, `BCRYPT`) or an
+`api-ms-win-*`/`ext-ms-*` API set. Visual C++ runtime DLLs (`VCRUNTIME*`,
+`MSVCP*`, `MSVCR*`, `CONCRT*`, `VCOMP*`, MFC and the debug `ucrtbased`) are
+rejected explicitly: build with the static CRT (`/MT`). Missing, truncated or
+malformed import tables fail closed. Staging, assembly and final inventory all
+repeat this check.
 
 Production signing registers the temporary keychain in the user search list
 before use, restores that list and deletes temporary certificate/keychain files
@@ -126,6 +141,110 @@ The portable ZIP deliberately excludes resource-fork/extended-attribute
 sidecars; required signed regular files remain in the exact inventory. This
 allows fail-closed extraction without treating arbitrary `__MACOSX` files as
 accepted payload. The DMG retains the normal macOS container acceptance path.
+
+## Static third-party dependency profile
+
+Use this profile when a plugin links third-party libraries. They must be linked
+**statically** into the single Mach-O and the single 4DX, so the exact layouts
+and the system-only import checks above still apply. Shipping extra DLLs or
+dylibs is not supported. A 4DX that imports a third-party DLL fails staging
+instead of failing to load in 4D on users' machines.
+
+```json
+"dependencies": {
+  "profile": "static",
+  "windows": "vcpkg",
+  "notices_dir": "THIRD-PARTY-NOTICES",
+  "allowed_licenses": ["BSD-3-Clause", "LGPL-2.1-or-later", "MIT", "Zlib"],
+  "copyleft_acknowledged": ["LGPL-2.1-or-later"],
+  "components": {
+    "glib": {"license": "LGPL-2.1-or-later", "notice": "glib.txt", "platforms": ["windows"]},
+    "zlib": {"license": "Zlib", "notice": "zlib.txt", "platforms": ["macos", "windows"]}
+  }
+}
+```
+
+- **Components.** Each library linked into either binary is a component. On
+  Windows its name is the vcpkg port name. `platforms` is a sorted subset of
+  `macos`/`windows`. `vcpkg-*` helper ports are build tools, not components.
+- **Licenses.** `license` is an SPDX expression (`AND`, `OR`, `WITH`,
+  parentheses). Every license id must be in the sorted `allowed_licenses`;
+  `NOASSERTION` is rejected.
+- **Copyleft.** Any `GPL-*` or `LGPL-*` id used must be listed in
+  `copyleft_acknowledged`, and that list must contain exactly the ids in use.
+  Acknowledgment records that the maintainer accepts the obligations: GPL makes
+  the whole plugin a covered work. Static LGPL linking requires offering users a
+  way to relink modified library versions, by publishing the plugin source and
+  its pinned build inputs or the object files. `AGPL-*` is always rejected.
+- **Notices.** `notices_dir` holds exactly one committed, non-empty, LF file per
+  component, typically the upstream license text plus a copyright notice. Extra,
+  missing or empty files fail staging. Assembly copies them to
+  `THIRD-PARTY-NOTICES/` in the payload. It also writes `THIRD-PARTY.json`
+  recording components, licenses, acknowledgments, static linkage, the
+  corresponding-source statement and, on Windows, the resolved vcpkg baseline,
+  overrides, triplets and port versions. Final verification compares both
+  against the source commit and build provenance.
+
+### Windows: vcpkg (`"windows": "vcpkg"`)
+
+The plugin commits a manifest-mode `vcpkg.json` at the repository root:
+
+```json
+{
+  "name": "example",
+  "dependencies": [{"name": "poppler", "default-features": false, "features": ["cairo", "glib", "zlib"]}],
+  "builtin-baseline": "<40-hex vcpkg commit>",
+  "overrides": [{"name": "brotli", "version": "1.2.1"}]
+}
+```
+
+- **Pinning.** `builtin-baseline` must be a 40-character vcpkg commit. CI checks
+  out exactly that commit of `microsoft/vcpkg` and resolves ports from its
+  builtin registry. Raise the baseline to take routine updates.
+- **Overrides.** Use `overrides` with an exact `version` (optional
+  `port-version`) to pin a security fix ahead of the baseline, for example a
+  CVE fix in a transitive dependency. Remove the override after the baseline
+  catches up.
+- **Forbidden inputs.** `vcpkg-configuration.json`, custom registries, overlay
+  ports and fields other than `$schema`, `name`, `version*`, `port-version`,
+  `description`, `homepage`, `license`, `supports`, `dependencies`, `overrides`
+  and `builtin-baseline` fail closed.
+- **Triplets.** The generator renders `vcpkg-triplets/x64-windows-static-release.cmake`
+  (x64, static CRT, static libraries, release only) and the host triplet
+  `x64-windows-release-host`. Do not edit them; `--check` detects drift. Many
+  ports' installed headers already select static linkage (for example glib's
+  `GLIB_STATIC_COMPILATION`). When a library does not, define its `*_STATIC`
+  macro in CMake (see the plugin development guide).
+- **CI.** The generated **Build and Test** Windows job:
+  1. resolves the baseline with `scripts/package.py vcpkg-baseline`;
+  2. restores the vcpkg binary cache with `actions/cache`, keyed by baseline and
+     the hash of `vcpkg.json` and triplets;
+  3. bootstraps vcpkg in `RUNNER_TEMP` and installs into `<build_dir>/vcpkg_installed`;
+  4. saves the cache on a miss, including after a failed install, so finished
+     packages are kept;
+  5. configures CMake with the vcpkg toolchain and manifest install disabled.
+
+  A cold build of a large closure can take hours (poppler with cairo and glib
+  took about 2.5 hours, mostly MSYS tools), so the test job allows 360 minutes.
+  Warm runs reuse the cache.
+- **Closure.** Staging reads the installed vcpkg metadata. The set of
+  target-triplet ports, excluding `vcpkg-*` helpers, must equal the declared
+  Windows components. Each port's SPDX license must match its declared license
+  unless vcpkg reports `NOASSERTION`. The closure and port versions are bound
+  into the Windows input manifest and `THIRD-PARTY.json`. The PE import check
+  independently proves that nothing is linked dynamically.
+
+### macOS and `"windows": "none"`
+
+The pipeline does not build macOS dependencies. Build them statically from the
+plugin's own CMake, for example from pinned submodules as universal
+`arm64;x86_64` static libraries. Homebrew dylibs are single-architecture and
+dynamically linked, so they fail the closure check. The pipeline enforces the
+system-only Mach-O closure and the notices. With `"windows": "none"`, Windows
+components must likewise come from the plugin's CMake, and no vcpkg steps are
+generated.
+
+The baseline workflows are unchanged for `dependencies: []`.
 
 ## Credentials
 

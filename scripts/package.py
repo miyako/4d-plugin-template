@@ -82,8 +82,6 @@ def config():
     require(type(data["schema"]) is int and data["schema"] == 1, "Unsupported config schema")
     require(data["profile"] == "macos-universal-windows-x64", "Unsupported profile")
     require(data["signing_policy"] == "developer-id", "Unsupported signing policy")
-    require(type(data["dependencies"]) is list and not data["dependencies"],
-            "Additional dependencies are not supported by the baseline pipeline")
     require(type(data["native_tests"]) is bool, "native_tests must be boolean")
     patterns = {
         "product": r"[A-Za-z][A-Za-z0-9_-]{0,63}",
@@ -115,7 +113,263 @@ def config():
             "sdk_dir must not overlap source_dir")
     require(build != project and build not in project.parents and project not in build.parents,
             "build_dir must not overlap test_project")
+    validate_dependencies(data)
     return data
+
+
+# Static third-party dependency profile; mirrors generate_plugin_pipeline.validate_dependencies.
+DEPENDENCY_FIELDS = {"profile", "windows", "notices_dir", "allowed_licenses",
+                     "copyleft_acknowledged", "components"}
+SPDX_ID = r"[A-Za-z0-9][A-Za-z0-9.+-]{0,63}"
+COPYLEFT = re.compile(r"L?GPL-")
+PORT_NAME = r"[a-z0-9][a-z0-9-]{0,63}"
+NOTICE_FILE = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
+NOTICES_DIR = r"[A-Za-z0-9][A-Za-z0-9_-]*(?:/[A-Za-z0-9][A-Za-z0-9_.-]*)*"
+VCPKG_TRIPLET = "x64-windows-static-release"
+VCPKG_HOST_TRIPLET = "x64-windows-release-host"
+VCPKG_FIELDS = {"$schema", "name", "version", "version-semver", "version-date", "version-string",
+                "port-version", "description", "homepage", "license", "dependencies",
+                "overrides", "builtin-baseline", "supports"}
+THIRD_PARTY_NOTICES = "THIRD-PARTY-NOTICES"
+THIRD_PARTY_RECORD = "THIRD-PARTY.json"
+
+
+def license_ids(expression):
+    """SPDX ids in a license expression; operators and exceptions are not licenses."""
+    require(isinstance(expression, str) and 0 < len(expression) <= 256,
+            "Invalid SPDX license expression")
+    invalid = f"Invalid SPDX license expression: {expression}"
+    ids, depth, operand, exception, after_id = [], 0, True, False, False
+    for token in re.findall(r"[()]|[^\s()]+", expression):
+        licence = False
+        if token == "(":
+            require(operand and not exception, invalid)
+            depth += 1
+        elif token == ")":
+            require(not operand and depth > 0, invalid)
+            depth -= 1
+        elif token in ("AND", "OR", "WITH"):
+            require(not operand and (token != "WITH" or after_id), invalid)
+            operand, exception = True, token == "WITH"
+        else:
+            require(operand and re.fullmatch(SPDX_ID, token) and token != "NOASSERTION", invalid)
+            if not exception:
+                ids.append(token)
+                licence = True
+            operand, exception = False, False
+        after_id = licence
+    require(not operand and not depth, invalid)
+    return ids
+
+
+def sorted_unique(value, field):
+    require(isinstance(value, list) and all(isinstance(item, str) for item in value)
+            and value == sorted(set(value)),
+            f"dependencies.{field} must be a sorted list of unique strings")
+    return value
+
+
+def validate_dependencies(data):
+    dependencies = data["dependencies"]
+    if type(dependencies) is list and not dependencies:
+        return None
+    require(isinstance(dependencies, dict) and set(dependencies) == DEPENDENCY_FIELDS,
+            "dependencies must be [] or a static dependency profile object")
+    require(dependencies["profile"] == "static", "Unsupported dependency profile")
+    require(dependencies["windows"] in ("vcpkg", "none"), "dependencies.windows must be vcpkg or none")
+    notices = dependencies["notices_dir"]
+    require(isinstance(notices, str) and re.fullmatch(NOTICES_DIR, notices)
+            and not any(part.endswith(".") for part in notices.split("/")),
+            "Unsafe dependencies.notices_dir")
+    safe_path(notices)
+    for field in ("build_dir", "sdk_dir"):
+        other, path = PurePosixPath(data[field]), PurePosixPath(notices)
+        require(path != other and other not in path.parents and path not in other.parents,
+                f"dependencies.notices_dir must not overlap {field}")
+    allowed = sorted_unique(dependencies["allowed_licenses"], "allowed_licenses")
+    require(allowed, "dependencies.allowed_licenses must not be empty")
+    for license in allowed:
+        require(re.fullmatch(SPDX_ID, license) and license != "NOASSERTION",
+                f"Invalid SPDX license id: {license}")
+        require(not license.upper().startswith("AGPL"),
+                f"AGPL is not distributable as a statically linked plugin: {license}")
+    acknowledged = sorted_unique(dependencies["copyleft_acknowledged"], "copyleft_acknowledged")
+    components = dependencies["components"]
+    require(isinstance(components, dict) and components,
+            "dependencies.components must be a non-empty object")
+    used, windows = set(), False
+    for name, component in components.items():
+        require(re.fullmatch(PORT_NAME, name) and not name.startswith("vcpkg-"),
+                f"Invalid dependency component name: {name!r}")
+        require(isinstance(component, dict) and set(component) == {"license", "notice", "platforms"},
+                f"Component {name} must define exactly license, notice and platforms")
+        ids = license_ids(component["license"])
+        for license in ids:
+            require(license in allowed, f"Component {name} license is not allowed: {license}")
+        used.update(ids)
+        notice = component["notice"]
+        require(isinstance(notice, str) and re.fullmatch(NOTICE_FILE, notice)
+                and not notice.endswith("."), f"Unsafe notice file for component {name}")
+        safe_path(notice)
+        platforms = sorted_unique(component["platforms"], "platforms")
+        require(platforms and set(platforms) <= {"macos", "windows"},
+                f"Component {name} platforms must be macos and/or windows")
+        windows = windows or "windows" in platforms
+    copyleft = {license for license in used if COPYLEFT.match(license)}
+    require(set(acknowledged) == copyleft,
+            "dependencies.copyleft_acknowledged must list exactly the GPL/LGPL licenses "
+            f"used by components: {sorted(copyleft)}")
+    require(dependencies["windows"] != "vcpkg" or windows,
+            "A vcpkg profile requires at least one Windows component")
+    return dependencies
+
+
+def dependency_profile():
+    dependencies = config()["dependencies"]
+    return dependencies if isinstance(dependencies, dict) else None
+
+
+def uses_vcpkg():
+    profile = dependency_profile()
+    return profile is not None and profile["windows"] == "vcpkg"
+
+
+def validate_vcpkg_manifest(content):
+    """Pinned, registry-free vcpkg manifest: builtin-baseline plus exact-version overrides."""
+    require(isinstance(content, bytes) and b"\r" not in content, "vcpkg.json must use LF line endings")
+    manifest = json.loads(content, object_pairs_hook=unique_object)
+    require(isinstance(manifest, dict) and set(manifest) <= VCPKG_FIELDS,
+            "vcpkg.json has unsupported fields (registries, overlays and configuration are forbidden)")
+    baseline = manifest.get("builtin-baseline")
+    require(isinstance(baseline, str) and re.fullmatch("[0-9a-f]{40}", baseline),
+            "vcpkg.json must pin builtin-baseline to a full vcpkg commit")
+    overrides = manifest.get("overrides", [])
+    require(isinstance(overrides, list), "vcpkg.json overrides must be a list")
+    names = []
+    for override in overrides:
+        require(isinstance(override, dict) and {"name", "version"} <= set(override)
+                <= {"name", "version", "port-version"}, "vcpkg.json overrides must pin exact versions")
+        require(isinstance(override["name"], str) and re.fullmatch(PORT_NAME, override["name"]),
+                "Invalid vcpkg override name")
+        require(isinstance(override["version"], str) and override["version"]
+                and not any(c in override["version"] for c in "\r\n\0"), "Invalid vcpkg override version")
+        require(type(override.get("port-version", 0)) is int and override.get("port-version", 0) >= 0,
+                "Invalid vcpkg override port-version")
+        names.append(override["name"])
+    require(len(names) == len(set(names)), "Duplicate vcpkg override")
+    return {"baseline": baseline,
+            "overrides": sorted(overrides, key=lambda override: override["name"])}
+
+
+def vcpkg_baseline():
+    require(uses_vcpkg(), "The pipeline config does not enable the vcpkg dependency profile")
+    no_symlink_path(ROOT / "vcpkg.json")
+    require(not (ROOT / "vcpkg-configuration.json").exists(),
+            "vcpkg-configuration.json is forbidden by the static dependency profile")
+    print(validate_vcpkg_manifest((ROOT / "vcpkg.json").read_bytes())["baseline"])
+
+
+def committed_vcpkg(commit):
+    require(not run(["git", "ls-tree", "--name-only", commit, "--", "vcpkg-configuration.json"]).strip(),
+            "vcpkg-configuration.json is forbidden by the static dependency profile")
+    return validate_vcpkg_manifest(run(["git", "show", f"{commit}:vcpkg.json"]))
+
+
+def committed_notices(commit):
+    """Exact committed notices: one non-empty file per component, nothing else."""
+    profile = dependency_profile()
+    directory = profile["notices_dir"]
+    expected = {component["notice"] for component in profile["components"].values()}
+    listing = run(["git", "ls-tree", "-r", "-z", "--name-only", commit, "--", directory]).decode()
+    actual = {name[len(directory) + 1:] for name in listing.split("\0") if name}
+    require(actual == expected,
+            f"{directory} must contain exactly the declared notices; "
+            f"missing={sorted(expected - actual)}, additional={sorted(actual - expected)}")
+    notices = {}
+    for name in sorted(expected):
+        content = run(["git", "show", f"{commit}:{directory}/{name}"])
+        require(content.strip(), f"Empty third-party notice: {name}")
+        notices[name] = content
+    return notices
+
+
+def vcpkg_closure():
+    """Installed target-triplet ports must be exactly the declared Windows components."""
+    profile = dependency_profile()
+    installed = ROOT / config()["build_dir"] / "vcpkg_installed"
+    info = installed / "vcpkg" / "info"
+    no_symlink_path(info)
+    require(info.is_dir(), f"Missing vcpkg install metadata: {info}")
+    suffix = f"_{VCPKG_TRIPLET}.list"
+    ports = {}
+    for path in sorted(info.iterdir()):
+        if not path.name.endswith(suffix):
+            continue
+        port = path.name.split("_", 1)[0]
+        require(re.fullmatch(PORT_NAME, port), f"Invalid vcpkg port: {port!r}")
+        if port.startswith("vcpkg-"):
+            continue
+        component = profile["components"].get(port)
+        require(component is not None and "windows" in component["platforms"],
+                f"Undeclared vcpkg port in Windows closure: {port}")
+        spdx = read_json(installed / VCPKG_TRIPLET / "share" / port / "vcpkg.spdx.json")
+        packages = [item for item in spdx.get("packages", []) if isinstance(item, dict)
+                    and item.get("SPDXID") == "SPDXRef-port"] if isinstance(spdx, dict) else []
+        require(len(packages) == 1, f"Missing vcpkg SPDX port record: {port}")
+        version, concluded = packages[0].get("versionInfo"), packages[0].get("licenseConcluded")
+        require(isinstance(version, str) and version and not any(c in version for c in "\r\n\0"),
+                f"Invalid vcpkg port version: {port}")
+        require(isinstance(concluded, str) and concluded, f"Missing vcpkg license: {port}")
+        if concluded != "NOASSERTION":
+            require(concluded == component["license"],
+                    f"vcpkg license for {port} is {concluded}; declared {component['license']}")
+        ports[port] = {"license": component["license"], "version": version}
+    declared = {name for name, component in profile["components"].items()
+                if "windows" in component["platforms"]}
+    require(set(ports) == declared,
+            f"Declared Windows components missing from vcpkg closure: {sorted(declared - set(ports))}")
+    return ports
+
+
+def validate_windows_dependencies(value):
+    require(isinstance(value, dict) and set(value) == {"triplet", "ports"}
+            and value["triplet"] == VCPKG_TRIPLET and isinstance(value["ports"], dict),
+            "Invalid Windows dependency closure")
+    profile = dependency_profile()
+    declared = {name for name, component in profile["components"].items()
+                if "windows" in component["platforms"]}
+    require(set(value["ports"]) == declared, "Windows dependency closure differs from declared components")
+    for port, record in value["ports"].items():
+        require(isinstance(record, dict) and set(record) == {"license", "version"}
+                and record["license"] == profile["components"][port]["license"]
+                and isinstance(record["version"], str) and record["version"],
+                f"Invalid Windows dependency record: {port}")
+
+
+def third_party_record(build):
+    """Deterministic THIRD-PARTY.json content, recomputed during verification."""
+    profile = dependency_profile()
+    commit = build["source_commit"]
+    record = {
+        "schema": 1,
+        "source_commit": commit,
+        "components": {name: {"license": component["license"],
+                              "notice": f"{THIRD_PARTY_NOTICES}/{component['notice']}",
+                              "platforms": component["platforms"]}
+                       for name, component in sorted(profile["components"].items())},
+        "copyleft_acknowledged": profile["copyleft_acknowledged"],
+        "linkage": "static",
+        "vcpkg": None,
+        "corresponding_source": (
+            f"Rebuild from plugin source commit {commit} with the third-party sources listed here"
+            + (", resolved by the pinned vcpkg baseline and overrides" if profile["windows"] == "vcpkg"
+               else "") + "; the same build relinks modified versions of statically linked components."),
+    }
+    if profile["windows"] == "vcpkg":
+        record["vcpkg"] = {**committed_vcpkg(commit), "triplet": VCPKG_TRIPLET,
+                           "host_triplet": VCPKG_HOST_TRIPLET,
+                           "ports": build["inputs"]["windows"]["dependencies"]["ports"]}
+    return (json.dumps(record, indent=2, sort_keys=True) + "\n").encode()
 
 
 def layout():
@@ -247,18 +501,86 @@ def verify_hashes(payload, mapping, exclude=()):
         require(actual[key] == mapping[key], f"SHA-256 mismatch: {key}")
 
 
+WINDOWS_SYSTEM_DLLS = frozenset(name + ".dll" for name in (
+    "advapi32", "bcrypt", "cfgmgr32", "comctl32", "comdlg32", "crypt32", "d2d1", "d3d11",
+    "dbghelp", "dnsapi", "dwmapi", "dwrite", "dxgi", "gdi32", "gdiplus", "imm32", "iphlpapi",
+    "kernel32", "mpr", "msimg32", "mswsock", "ncrypt", "netapi32", "normaliz", "ntdll",
+    "ole32", "oleacc", "oleaut32", "opengl32", "psapi", "rpcrt4", "secur32", "setupapi",
+    "shcore", "shell32", "shlwapi", "ucrtbase", "urlmon", "user32", "userenv", "uxtheme", "version",
+    "windowscodecs", "winhttp", "wininet", "winmm", "wldap32", "ws2_32", "wtsapi32"))
+WINDOWS_API_SET = re.compile(r"(?:api|ext)-ms-[a-z0-9-]+-l[0-9]+-[0-9]+-[0-9]+\.dll")
+# The exact layout ships one self-contained 4DX; Visual C++ runtimes must be linked statically.
+VCRUNTIME_DLL = re.compile(r"(?:vcruntime|msvcp|msvcr|concrt|vcomp|vccorlib|vcamp|mfc|ucrtbased)"
+                           r"[a-z0-9_]*\.dll")
+PE_MAX_IMPORTS = 4096
+
+
+def pe_imports(data):
+    require(len(data) >= 64 and data[:2] == b"MZ", "Invalid Windows DOS header")
+    pe = struct.unpack_from("<I", data, 60)[0]
+    require(pe >= 64 and pe + 24 <= len(data) and data[pe:pe + 4] == b"PE\0\0",
+            "Invalid PE header offset")
+    machine, sections, optional_size = (struct.unpack_from("<H", data, pe + o)[0] for o in (4, 6, 20))
+    optional = pe + 24
+    require(machine == 0x8664 and optional + 2 <= len(data)
+            and struct.unpack_from("<H", data, optional)[0] == 0x20B,
+            "Windows binary must be AMD64 PE32+")
+    require(112 <= optional_size and optional + optional_size <= len(data) and 0 < sections <= 96,
+            "Invalid PE optional header")
+    directories = struct.unpack_from("<I", data, optional + 108)[0]
+    require(directories <= 16 and 112 + 8 * directories <= optional_size,
+            "Invalid PE data directories")
+    table = optional + optional_size
+    require(table + 40 * sections <= len(data), "Truncated PE section table")
+    mapped = []
+    for index in range(sections):
+        virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from(
+            "<IIII", data, table + 40 * index + 8)
+        require(raw_offset + raw_size <= len(data), "PE section exceeds file")
+        mapped.append((virtual_address, max(virtual_size, raw_size), raw_offset, raw_size))
+
+    def offset(rva, size):
+        for address, extent, raw, raw_size in mapped:
+            if address <= rva and rva + size <= address + min(extent, raw_size):
+                return raw + rva - address
+        raise PackageError(f"Unmapped PE RVA: {rva:#x}")
+
+    def name_at(rva):
+        start = offset(rva, 1)
+        end = data.find(b"\0", start, start + 256)
+        require(end > start, "Invalid PE import name")
+        raw = data[start:end]
+        require(all(0x21 <= c < 0x7F and c not in b'\\/:<>"|?*' for c in raw),
+                "Invalid PE import name")
+        return raw.decode("ascii")
+
+    names = []
+    for directory, size, field in ((1, 20, 12), (13, 32, 4)):
+        if directory >= directories:
+            continue
+        rva, length = struct.unpack_from("<II", data, optional + 112 + 8 * directory)
+        if not rva and not length:
+            continue
+        require(rva, "Invalid PE import directory")
+        for index in range(PE_MAX_IMPORTS + 1):
+            require(index < PE_MAX_IMPORTS, "Too many PE import descriptors")
+            descriptor = data[offset(rva + size * index, size):][:size]
+            if not any(descriptor):
+                break
+            names.append(name_at(struct.unpack_from("<I", descriptor, field)[0]))
+    return names
+
+
 def validate_pe(path):
-    with path.open("rb") as binary:
-        header = binary.read(64)
-        require(len(header) == 64 and header[:2] == b"MZ", "Invalid Windows DOS header")
-        offset = struct.unpack_from("<I", header, 60)[0]
-        require(offset >= 64, "Invalid PE header offset")
-        binary.seek(offset)
-        pe = binary.read(26)
-        require(len(pe) == 26 and pe[:4] == b"PE\0\0"
-                and struct.unpack_from("<H", pe, 4)[0] == 0x8664
-                and struct.unpack_from("<H", pe, 24)[0] == 0x20B,
-                "Windows binary must be AMD64 PE32+")
+    imports = pe_imports(Path(path).read_bytes())
+    require(imports, "Windows binary has no imports")
+    for name in imports:
+        folded = name.lower()
+        require(not VCRUNTIME_DLL.fullmatch(folded),
+                f"VC++ runtime import forbidden (link the static CRT): {name}")
+        require(folded in WINDOWS_SYSTEM_DLLS or WINDOWS_API_SET.fullmatch(folded),
+                f"Non-system Windows import: {name}")
+    return imports
 
 
 def validate_macos(path):
@@ -293,8 +615,12 @@ def validate_plist(payload, version):
 
 def validate_input(data, expected, platform):
     validate_metadata(data, expected)
-    require(set(data) == {"schema", *BINDING, "platform", "toolchain", "files"},
+    closure = platform == "windows-x64" and uses_vcpkg()
+    require(set(data) == {"schema", *BINDING, "platform", "toolchain", "files"}
+            | ({"dependencies"} if closure else set()),
             "Unexpected input manifest fields")
+    if closure:
+        validate_windows_dependencies(data["dependencies"])
     require(data.get("platform") == platform, f"Incorrect input platform: {platform}")
     compiler = data.get("toolchain")
     require(isinstance(compiler, dict) and set(compiler) == {"compiler_id", "compiler_version", "cmake"}
@@ -325,6 +651,12 @@ def stage(platform, output):
         validate_plist(source.parent, expected["version"])
     else:
         validate_pe(canonical[p["win"]])
+    closure = None
+    if dependency_profile():
+        committed_notices(expected["source_commit"])
+        if platform == "windows" and uses_vcpkg():
+            committed_vcpkg(expected["source_commit"])
+            closure = {"triplet": VCPKG_TRIPLET, "ports": vcpkg_closure()}
     compiler = toolchain()
     destination = output / platform
     fresh_directory(destination)
@@ -334,6 +666,8 @@ def stage(platform, output):
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, dest)
     data = {"schema": 1, **expected, "platform": target, "toolchain": compiler, "files": hashes(payload)}
+    if closure is not None:
+        data["dependencies"] = closure
     validate_input(data, expected, target)
     write_json(destination / "manifest.json", data)
 
@@ -365,6 +699,9 @@ def assemble(inputs, output):
         validate_macos(mac_payload / p["mac"])
     license_bytes = run(["git", "show", f'{expected["source_commit"]}:LICENSE'])
     sdk_license = run(["git", "-C", config()["sdk_dir"], "show", f'{expected["sdk_commit"]}:LICENSE.md'])
+    build = {"schema": 1, **expected, "hashes": "pre-sign", "inputs": manifests}
+    notices = committed_notices(expected["source_commit"]) if dependency_profile() else {}
+    record = third_party_record(build) if dependency_profile() else None
     fresh_directory(output)
     payload = output / "payload"
     shutil.copytree(mac_payload, payload)
@@ -373,8 +710,12 @@ def assemble(inputs, output):
     shutil.copy2(win_payload / p["win"], payload / p["win"])
     (payload / "LICENSE").write_bytes(license_bytes)
     (payload / "SDK-LICENSE.md").write_bytes(sdk_license)
-    write_json(payload / "BUILD-PROVENANCE.json",
-               {"schema": 1, **expected, "hashes": "pre-sign", "inputs": manifests})
+    if record is not None:
+        (payload / THIRD_PARTY_NOTICES).mkdir()
+        for name, content in notices.items():
+            (payload / THIRD_PARTY_NOTICES / name).write_bytes(content)
+        (payload / THIRD_PARTY_RECORD).write_bytes(record)
+    write_json(payload / "BUILD-PROVENANCE.json", build)
 
 
 def build_provenance(payload):
@@ -390,10 +731,18 @@ def build_provenance(payload):
     return build
 
 
+def third_party_files():
+    profile = dependency_profile()
+    if profile is None:
+        return set()
+    return {THIRD_PARTY_RECORD} | {f"{THIRD_PARTY_NOTICES}/{component['notice']}"
+                                   for component in profile["components"].values()}
+
+
 def validate_payload_layout(payload, actual):
     p = layout()
     required = layouts()["macos-universal"] | layouts()["windows-x64"] | {
-        "LICENSE", "SDK-LICENSE.md", "BUILD-PROVENANCE.json"}
+        "LICENSE", "SDK-LICENSE.md", "BUILD-PROVENANCE.json"} | third_party_files()
     allowed = required | ({p["signature"]} if p["signature"] in actual else set())
     exact_files(actual, allowed, "Payload")
     exact_directories(payload, allowed)
@@ -412,6 +761,12 @@ def validate_payload_content(payload, build):
             ("LICENSE", ["git", "show", f'{build["source_commit"]}:LICENSE']),
             ("SDK-LICENSE.md", ["git", "-C", config()["sdk_dir"], "show", f'{build["sdk_commit"]}:LICENSE.md'])):
         require((payload / name).read_bytes() == run(command), f"Source license mismatch: {name}")
+    if dependency_profile():
+        for name, content in committed_notices(build["source_commit"]).items():
+            require((payload / THIRD_PARTY_NOTICES / name).read_bytes() == content,
+                    f"Third-party notice mismatch: {name}")
+        require((payload / THIRD_PARTY_RECORD).read_bytes() == third_party_record(build),
+                f"{THIRD_PARTY_RECORD} differs from source and build provenance")
     current = hashes(payload)
     for platform in ("macos", "windows"):
         for key, digest in build["inputs"][platform]["files"].items():
@@ -466,11 +821,14 @@ def main(argv=None):
     command.add_argument("--payload", type=Path, required=True)
     command.add_argument("--manifest", type=Path, required=True)
     commands.add_parser("config")
+    commands.add_parser("vcpkg-baseline")
     args = vars(parser.parse_args(argv))
     action = args.pop("command")
     try:
         if action == "config":
             print(json.dumps(config(), sort_keys=True))
+        elif action == "vcpkg-baseline":
+            vcpkg_baseline()
         else:
             globals()[action](**args)
     except (ValueError, OSError, subprocess.CalledProcessError, UnicodeError) as error:
