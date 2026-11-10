@@ -115,7 +115,8 @@ operating-system libraries. macOS binaries may link only `/usr/lib` and
 running external tools: the 4DX must be AMD64 PE32+, and every entry in its
 import and delay-import tables must be a system DLL on the `package.py`
 allowlist (for example `KERNEL32`, `USER32`, `GDI32`, `ADVAPI32`, `SHELL32`,
-`OLE32`, `OLEAUT32`, `SHLWAPI`, `WS2_32`, `CRYPT32`, `BCRYPT`) or an
+`OLE32`, `OLEAUT32`, `SHLWAPI`, `WS2_32`, `CRYPT32`, `BCRYPT`, and
+`BCRYPTPRIMITIVES`, which the Rust standard library imports for `ProcessPrng`) or an
 `api-ms-win-*`/`ext-ms-*` API set. Visual C++ runtime DLLs (`VCRUNTIME*`,
 `MSVCP*`, `MSVCR*`, `CONCRT*`, `VCOMP*`, MFC and the debug `ucrtbased`) are
 rejected explicitly: build with the static CRT (`/MT`). Missing, truncated or
