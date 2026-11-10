@@ -244,7 +244,7 @@ Format: `command_name({params}):{return_type}`
 |---|---|---|---|
 | `&T` | Text | `PA_GetStringParameter` | `PA_ReturnString` |
 | `&L` | Longint | `PA_GetLongParameter` | `PA_ReturnLong` |
-| `&R` | Real | `PA_GetDoubleParameter` | `PA_ReturnDouble` |
+| `&8` | Real | `PA_GetDoubleParameter` | `PA_ReturnDouble` |
 | `&D` | Date | `PA_GetDateParameter` | `PA_ReturnDate` |
 | `&H` | Time | `PA_GetTimeParameter` | `PA_ReturnTime` |
 | `&I` | Integer | `PA_GetShortParameter` | `PA_ReturnShort` |
@@ -254,9 +254,20 @@ Format: `command_name({params}):{return_type}`
 | `&J` | Object | `PA_GetObjectParameter` | `PA_ReturnObject` |
 | `&C` | Collection | `PA_GetCollectionParameter` | `PA_ReturnCollection` |
 | `&Z` | Pointer | `PA_GetPointerParameter` | — |
-| `&8` | Double (deprecated) | — | — |
+| `&R` | Not a Real token: see note below | — | — |
 | `&S` | String (deprecated) | — | — |
 | `&U` | UTXT (deprecated) | — | — |
+
+**Real parameters use `&8`.** With `&R`, `PA_GetDoubleParameter` read garbage
+(`4.17e-317` for a `0.5` passed by the caller) in `4d-plugin-phonon`'s
+`Phonon SET VOLUME`; `&8` reads the value correctly, as existing plugins such as
+`4d-plugin-dock-tile` already declare it.
+
+**Return types** use letters after the closing parenthesis: `:T`, `:L`, `:J`
+(Object), `:C` (Collection), `:P` (Picture) and `:O`, which is a **BLOB** returned
+with `PA_ReturnBlob` (see [pitfall 17](#17-manifestjson-object-return-type-is-j-not-o)).
+A Real return has not been verified with either letter; check it in a test
+method before relying on it.
 
 ### Command Order Matters
 
@@ -1308,6 +1319,18 @@ MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/Info.plist.in"
 $path:=Convert path system to POSIX(Get 4D folder(Current resources folder))+"file.html"
 ```
 
+The same applies to `Folder`/`File` objects made from a filesystem name.
+`Folder(fk database folder).path` is a 4D filesystem path (`/PACKAGE/...`), not a
+POSIX path, so native code reports the folder as missing. Make the object from its
+platform path first; its `.path` is then a real POSIX path on macOS and a
+`C:/...` path that Windows file APIs accept:
+```4d
+var $folder : 4D.Folder
+$folder:=Folder(fk database folder).folder("models")
+$folder:=Folder($folder.platformPath; fk platform path)
+$path:=$folder.path  // "/Users/.../models/", not "/PACKAGE/models/"
+```
+
 ### 11. Third-party library fails to compile on MSVC with `constexpr` errors (C3615)
 
 **Symptom**: MSVC error `C3615: constexpr function '...' cannot result in a constant expression` in a third-party header (e.g., litehtml's `pixel_type.h` using `std::abs` in `constexpr` operators).
@@ -1388,7 +1411,13 @@ PA_ReturnPicture(params, pic);
 
 ### 15. PA_JsonParse SDK bug — crashes with eVK_Object
 
-`PA_JsonParse` in the SDK has a bug: when called with `eVK_Object`, it does **not** zero-initialize the `PA_Variable params[2]` array before calling `PA_SetStringVariable` / `PA_SetLongintVariable`. The uninitialized memory causes a crash in `GetLongOptParam` → `do_JSONParse`. The `eVK_ArrayObject` branch works because it calls `PA_CreateVariable` which zeroes the struct.
+`PA_JsonParse` in older SDK revisions has a bug: when called with `eVK_Object`, it does **not** zero-initialize the `PA_Variable params[2]` array before calling `PA_SetStringVariable` / `PA_SetLongintVariable`. The uninitialized memory causes a crash in `GetLongOptParam` → `do_JSONParse`. The `eVK_ArrayObject` branch works because it calls `PA_CreateVariable` which zeroes the struct.
+
+This depends on the SDK commit your submodule pins. The SDK at `cd97d18` (this
+tutorial's pin) declares `PA_Variable params[2], result;`; the SDK at `ad7944b`
+initializes it with `PA_Variable params[2] = {0}, result;`. The workaround below is
+correct with either, so keep it unless you have checked your pinned
+`4DPluginAPI.c`.
 
 **Workaround:** bypass `PA_JsonParse` and call `PA_ExecuteCommandByID(1218, ...)` directly with `memset`-zeroed params:
 
@@ -1415,14 +1444,20 @@ On HFS+/APFS (default case-insensitive), directory names like `CLD2/` and `cld2/
 In 4D manifest syntax, the return type codes are:
 - `T` — Text
 - `L` — Longint / Integer
-- `R` — Real
-- `B` — Boolean
+- Real — not verified as a return type (the working parameter token is `&8`, not `&R`)
 - `J` — Object (JSON)
 - `C` — Collection
 - `P` — Picture
-- `O` — **not a valid return type for object** (common mistake)
+- `O` — **BLOB**, returned with `PA_ReturnBlob(params, data, length)`; not an object
 
-Always use `:J` in the syntax string for commands that return an object.
+Always use `:J` in the syntax string for commands that return an object, and `:O`
+for a BLOB (`4d-plugin-phonon`'s `Phonon Synthesize(&L;&T;&J):O` returns WAV data
+this way).
+
+A Boolean return (`:B`) is not covered here: the SDK has no `PA_ReturnBoolean`
+setter, and returning a Boolean has not been verified with the current runtime.
+Prefer a Longint (`0`/`1`), or a command without a return value plus a status the
+caller can read.
 
 ### 18. Windows cross-platform build issues
 
@@ -2025,3 +2060,117 @@ not add ad-hoc download steps to generated workflows.
 **Committable artifacts** (small, no license issue):
 - Header files (`.h`) — type definitions and function declarations
 - Import libraries (`.lib` on Windows) — just symbol stubs, not runtime code
+
+### 28. Test methods: no member access directly on a parameterless plugin command
+
+`Phonon Get models.query("ref = :1"; $model)` does not parse: tool4d stops with
+`[58] A ")" was expected.` before running anything, and the failing method is not
+named. A plugin command whose syntax has no parameters cannot be followed by `.`;
+assign its result first:
+
+```4d
+var $models : Collection
+$models:=Phonon Get models
+ASSERT($models.query("ref = :1"; $model).length=1)
+```
+
+Commands with parameters (`Phonon Get model info($model).voices`) are fine. To find
+which method has a syntax error, run each test method as `--startup-method` on its own.
+
+### 29. Test methods: `BLOB to text` offset must be a variable
+
+The offset parameter of `BLOB to text` is passed by reference, so a literal (`0`)
+is a syntax error, again reported only as `A ")" was expected`:
+
+```4d
+var $offset : Integer
+ASSERT(BLOB to text($wav; UTF8 text without length; $offset; 4)="RIFF")
+```
+
+### 30. Statically linked Rust dependencies
+
+A library written in Rust can be linked into the single Mach-O and 4DX like any
+other static dependency (`4d-plugin-phonon` links the Phonon engine this way). Expose
+a small C ABI from a crate with `crate-type = ["staticlib"]`, commit its
+`Cargo.lock`, and let the plugin's CMake build it, so the generated pipeline needs
+no extra steps:
+
+- **Toolchain.** GitHub's macOS and Windows runners ship `rustup`/`cargo`. Run
+  `rustup target add` at configure time for each target, since the runner has only
+  the host target.
+- **One build per architecture.** Build `aarch64-apple-darwin` and
+  `x86_64-apple-darwin` from `CMAKE_OSX_ARCHITECTURES`, join them with `lipo`, and
+  pass `MACOSX_DEPLOYMENT_TARGET` to cargo. Put `CARGO_TARGET_DIR` inside the build
+  directory, and use `cargo build --release --locked`.
+- **Static CRT on Windows.** Rust's MSVC target links the dynamic CRT unless told
+  otherwise: set `RUSTFLAGS=-C target-feature=+crt-static`, or staging rejects
+  `VCRUNTIME140.dll`. Setting `RUSTFLAGS` replaces any `.cargo/config.toml` flags, so
+  add a CPU baseline there too if the library needs one.
+- **System libraries.** List what to link with
+  `cargo rustc --release --target <t> --crate-type staticlib -- --print native-static-libs`.
+  For a typical crate closure this is `kernel32 ntdll userenv ws2_32 dbghelp` on
+  Windows and `iconv` on macOS. Rust 1.78+ also imports `ProcessPrng` from
+  `bcryptprimitives.dll` (System32, Windows 10+) through `raw-dylib`; it does not
+  appear in that list. The staging allowlist accepts it from
+  miyako/4d-plugin-tutorial#21 on; before that, staging rejects every Rust plugin
+  with `Non-system Windows import: bcryptprimitives.dll`.
+- **Panics.** Unwinding across the C boundary aborts the host. Wrap every exported
+  function in `std::panic::catch_unwind` and turn a panic into an error result.
+- **Notices.** Declare the crate closure as one static-profile component whose
+  license is the conjunction of the licenses in use, and generate its notice file
+  from `cargo metadata` (normal dependencies only, without build scripts and
+  procedural macros, which are not linked). See `phonon-core/third_party_notices.py`
+  in `4d-plugin-phonon`.
+
+```cmake
+find_program(CARGO cargo HINTS "$ENV{HOME}/.cargo/bin" "$ENV{USERPROFILE}/.cargo/bin" REQUIRED)
+set(CARGO_TARGET_DIR "${CMAKE_BINARY_DIR}/cargo")
+# for each Rust target ${_t}:
+list(APPEND CORE_COMMANDS COMMAND ${CMAKE_COMMAND} -E env ${CARGO_ENV}
+    "CARGO_TARGET_DIR=${CARGO_TARGET_DIR}"
+    "${CARGO}" build --release --locked --target ${_t} --manifest-path "${CORE_DIR}/Cargo.toml")
+# macOS: COMMAND lipo -create <per-target .a> -output "${CORE_LIB}"
+add_custom_command(OUTPUT "${CORE_LIB}" ${CORE_COMMANDS}
+    DEPENDS ${CORE_SOURCES} "${CORE_DIR}/Cargo.toml" "${CORE_DIR}/Cargo.lock" VERBATIM)
+add_custom_target(core_build DEPENDS "${CORE_LIB}")
+add_dependencies(${PLUGIN_NAME} core_build)
+```
+
+### 31. Background threads, per-process errors and cleanup
+
+A command that starts work in the background (playback, a long job) returns a small
+Longint handle ([pitfall 25](#25-native-pointers-exceed-pa_long32)) and runs the work
+on threads that never call the 4D runtime. Patterns that held up in
+`4d-plugin-phonon`:
+
+- **Join on deinit.** Handle `kDeinitPlugin` and `kServerDeinitPlugin` in
+  `PluginMain`: signal every background task to stop, then join its threads and free
+  every native handle. These selectors arrive when 4D quits or closes the project.
+- **Never leave a joinable `std::thread`.** If `std::thread` construction throws
+  part way through a loop, destroying the joinable threads already started calls
+  `std::terminate` and takes 4D down. Catch the exception, finish the remaining work
+  inline, and join what started.
+- **Per-process error text.** For a `Get last error` style command, key the message
+  by `PA_GetCurrentProcessNumber()` in a mutex-protected map, so each 4D process
+  (cooperative or preemptive) reads its own, and erase the entry on `kCloseProcess`.
+- **Threads you cannot stop.** Some libraries start worker pools that live for the
+  life of the process (the Rust tensor library behind Phonon does). If 4D unloads
+  the plugin, those idle threads would run unmapped code. Pin the module once, on
+  `kInitPlugin` and before first use:
+
+```cpp
+#if defined(__APPLE__)
+Dl_info info;
+if (dladdr((const void *)&PluginMain, &info) && info.dli_fname)
+    dlopen(info.dli_fname, RTLD_LAZY | RTLD_NOLOAD | RTLD_NODELETE);  // keep the reference
+#elif defined(_WIN32)
+HMODULE module = nullptr;
+GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                   (LPCWSTR)&PluginMain, &module);
+#endif
+```
+
+- **Test without audio or devices.** CI runners may have no audio output or other
+  devices. Give such commands a device-less mode (`output: "none"` in phonon, which
+  paces playback in real time), and keep a real-device test that accepts either
+  success or a clearly prefixed device error.
