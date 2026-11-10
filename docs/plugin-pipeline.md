@@ -259,7 +259,12 @@ agent, read values, or modify installed skills as part of project generation.
 
 ## Offline checks and release handoff
 
+The generation tests parse workflows with PyYAML (`requirements-dev.txt`); install
+it first, for example in a virtual environment. `actionlint` is optional: its test
+is skipped when the command is not installed.
+
 ```sh
+python3 -m pip install -r requirements-dev.txt
 python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 zsh -n scripts/set-release-secrets.sh
 bash -n scripts/sign-package.sh

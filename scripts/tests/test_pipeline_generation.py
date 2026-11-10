@@ -625,6 +625,9 @@ class PipelineGenerationTests(unittest.TestCase):
         if missing:
             self.skipTest("Canonical helpers not available: " + ", ".join(missing))
         generator.generate(self.config, self.output, root=ROOT)
+        # actionlint resolves local reusable workflows from the nearest repository root;
+        # without one here it would climb to this checkout and miss the generated test.yml.
+        subprocess.check_call(["git", "init", "-q"], cwd=self.output)
         result = subprocess.run(
             [actionlint, *[str(self.output / name) for name in sorted(generator.LEGACY_WORKFLOWS)]],
             cwd=self.output, capture_output=True, text=True,
