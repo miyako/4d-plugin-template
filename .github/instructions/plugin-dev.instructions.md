@@ -229,7 +229,7 @@ In earlier versions, `FourdPack` (without `Ex`) was the entry point for ANSI str
 | `name` | Plugin identity. Must be unique across all installed plugins. If duplicates exist, none load. |
 | `id` | 15001–32767 (below 15000 is reserved by 4D). Legacy field, not functionally important. |
 | `theme` | Groups commands in the 4D IDE (design mode). |
-| `threadSafe` | Developer's guarantee that the code is thread-safe. Enables use in preemptive 4D processes. A `threadSafe:false` command used in a preemptive process causes a runtime/compiler error. |
+| `threadSafe` | Developer's guarantee that the code is thread-safe. Enables use in preemptive 4D processes. A `threadSafe:false` command used in a preemptive process causes a runtime/compiler error. The guarantee covers every library the command calls: see [pitfall 32](#32-wrapped-libraries-with-global-mutable-state). |
 
 ### Syntax Tokens
 
@@ -396,6 +396,13 @@ static void {command_name}(PA_PluginParameters params) {
 - For ASCII prefixes, widen manually: `result[i] = (PA_Unichar)ascii_char;`
 - `PA_GetStringParameter` returns a runtime-owned pointer — do **not** call `PA_DisposeUnistring` on it.
 - For dynamically created strings, use `PA_CreateUnistring` and `PA_DisposeUnistring`.
+- The fixed `PA_Unichar result[1024]` buffer above is for a demo only. For real text, convert
+  between UTF-16 and UTF-8 with a function that joins surrogate pairs (characters outside the
+  BMP, such as emoji) and replaces invalid sequences with U+FFFD, and keep strings in
+  `std::u16string` / `std::string`. `md4c/4d-helpers.h` in `4d-plugin-md4c` is a small,
+  tested copy, with typed readers for an options object and a builder for a result object.
+- An omitted trailing Object parameter arrives as `NULL` from `PA_GetObjectParameter`;
+  make every option reader accept `NULL` and fall back to its default.
 
 ### Platform-Specific Code
 
@@ -687,7 +694,9 @@ End if
 - Guards with `Application info.headless` — only runs in CLI mode (tool4d)
 - Calls all individual test methods
 - Outputs "PASS" to stdout on success
-- If any `ASSERT` fails in headless mode: dialog → auto-abort → process exits with non-zero code → "PASS" is never printed
+- If any `ASSERT` fails in headless mode: dialog → auto-abort → "PASS" is never printed. The exit status
+  can still be `0` (tool4d 21.2 on macOS exits `0` after a failed `ASSERT`), so the `PASS` line is the
+  only reliable signal; the generated tool4d action requires both
 
 #### Virtual Explorer Folders (`folders.json`)
 
@@ -926,7 +935,9 @@ Generate a unique UUID (32 hex characters, uppercase) for each project.
 ### Exit Behavior
 
 - **PASS**: stdout contains "PASS", exit code 0
-- **FAIL**: ASSERT triggers a dialog → headless auto-abort → non-zero exit code, no "PASS" output
+- **FAIL**: ASSERT triggers a dialog → headless auto-abort → no "PASS" output. The exit code can
+  still be `0` (observed with tool4d 21.2 on macOS), so a local script must check for the exact
+  `PASS` line, as the generated tool4d action does, not only the exit status
 
 ### Download URLs
 
@@ -1603,6 +1614,11 @@ Given a plugin specification (name, commands, constants, behavior):
 - [ ] Create `folders.json` with "Tests" virtual folder
 - [ ] Create test methods with ASSERT statements
 - [ ] Cover each parameter with a non-default value whose effect is asserted
+- [ ] Take exact expected outputs from the wrapped library's own command-line tool
+      (for example `md2html`, the `cmark-gfm` CLI), built from the pinned submodule,
+      rather than writing them by hand
+- [ ] Prove a failure is detected: run once with a deliberately wrong `ASSERT` and check
+      that `PASS` is not printed (see [Exit Behavior](#exit-behavior)), then remove it
 - [ ] Create `test_all.4dm` runner method
 - [ ] Run tests locally with tool4d
 
@@ -1613,6 +1629,11 @@ Given a plugin specification (name, commands, constants, behavior):
 - [ ] Run tests
 
 ### 6. GitHub Actions Workflows
+- [ ] Check this tutorial for fixes not yet on `main` before generating:
+      `git -C <tutorial> fetch -q && git -C <tutorial> branch -r --no-merged origin/main`.
+      Commits pushed to a branch after its PR was merged never reach `main` (the
+      build-directory fix in miyako/4d-plugin-tutorial#24 was missed this way, and two plugins generated from
+      `main` failed at signing)
 - [ ] Generate the three workflows and required helpers from canonical pipeline configuration
 - [ ] Check generated files for drift; do not hand-author a competing pipeline
 - [ ] Verify default-branch-only bump and explicit release dispatch behavior
@@ -2196,3 +2217,43 @@ GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX
   devices. Give such commands a device-less mode (`output: "none"` in phonon, which
   paces playback in real time), and keep a real-device test that accepts either
   success or a clearly prefixed device error.
+
+### 32. Wrapped libraries with global mutable state
+
+`threadSafe: true` promises that the command is safe in preemptive processes, so it
+covers the wrapped library too. Before declaring it, search the library for `static`
+variables that are not `const` and check whether any is written after start-up.
+
+cmark-gfm has one: the table of special inline characters (`SPECIAL_CHARS` in
+`inlines.c`). Attaching an extension to a parser adds its characters (`~` for
+strikethrough) and freeing the parser removes them, so two conversions running at the
+same time can make each other miss an extension. Nothing crashes; the output is just
+wrong. `4d-plugin-cmark-gfm` serializes conversions with one `std::mutex` and does not
+call the 4D runtime while holding it. One-time registration (`cmark_gfm_core_extensions_ensure_registered`)
+also belongs under the lock or in `std::call_once`.
+
+tool4d runs the test project interpreted, where every process is cooperative, so the
+test project cannot exercise preemptive use. The source check is the only evidence.
+
+### 33. Upstream CMake projects too old for CMake 4
+
+Some libraries declare `cmake_minimum_required(VERSION 3.0)` or similar. CMake 4 refuses
+anything below 3.5, so `add_subdirectory` fails on current runners. Even with
+`CMAKE_POLICY_VERSION_MINIMUM=3.5`, the old policy level leaves CMP0091 at OLD, so
+`CMAKE_MSVC_RUNTIME_LIBRARY` ([pitfall 7](#7-crt-mismatch-with-third-party-libraries-windows))
+is ignored: the library's Windows objects get the dynamic CRT, and staging rejects the 4DX
+for importing `VCRUNTIME140.dll`.
+
+Either set both policies before adding the project:
+
+```cmake
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+add_subdirectory("${LIB_DIR}" "${CMAKE_BINARY_DIR}/lib" EXCLUDE_FROM_ALL)
+```
+
+or, for a small C library, skip its CMake project: compile its `.c` files into a static
+target in the plugin's own CMake and write the few headers its CMake would have
+generated (`configure_file` for `config.h.in` and version headers, `file(WRITE)` for an
+export header that defines the export macro as empty). `4d-plugin-cmark-gfm` does this;
+it also avoids building the library's tools and tests.

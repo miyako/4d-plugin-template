@@ -249,6 +249,31 @@ system-only Mach-O closure and the notices. With `"windows": "none"`, Windows
 components must likewise come from the plugin's CMake, and no vcpkg steps are
 generated.
 
+The smallest working case is
+[4d-plugin-md4c](https://github.com/miyako/4d-plugin-md4c): one pinned submodule
+(`md4c-src`), three C files compiled into a static target by the plugin's CMake on both
+platforms, and one notice file:
+
+```json
+"dependencies": {
+  "profile": "static",
+  "windows": "none",
+  "notices_dir": "THIRD-PARTY-NOTICES",
+  "allowed_licenses": ["MIT"],
+  "copyleft_acknowledged": [],
+  "components": {
+    "md4c": {"license": "MIT", "notice": "md4c.txt", "platforms": ["macos", "windows"]}
+  }
+}
+```
+
+A library whose linked files carry more than one license declares the conjunction and
+lists every id: [4d-plugin-cmark-gfm](https://github.com/miyako/4d-plugin-cmark-gfm)
+declares `"BSD-2-Clause AND MIT"` with `"allowed_licenses": ["BSD-2-Clause", "MIT"]`.
+Count only what is linked: cmark-gfm's CC-BY-SA specification text ships in the
+repository but not in the binary. The notice file can be the upstream `COPYING` with a
+first line naming the pinned version and URL.
+
 The baseline workflows are unchanged for `dependencies: []`.
 
 ## Credentials
@@ -283,6 +308,18 @@ artifact names/checksums, acceptance and the failing gate when incomplete. Reuse
 that run ID, wait with a deadline, then retrieve consolidated results; do not
 poll repeatedly, invent status commands or automatically merge/retry/release.
 The read-only release verification helper never dispatches or publishes.
+
+After dispatching **Build and Release**, check that the run's `headSha` is the commit
+you meant to release before waiting on it. A dispatch sent right after `git push` can
+resolve the branch to the previous commit:
+
+```sh
+gh run list --repo OWNER/REPO --workflow release.yml --limit 1 --json databaseId,headSha
+git rev-parse HEAD
+```
+
+If they differ, cancel that run (`gh run cancel RUN_ID --repo OWNER/REPO`) and dispatch
+again. The wrong run would otherwise test, sign and publish the previous revision.
 
 From the clean generated plugin checkout at the release's source revision:
 
