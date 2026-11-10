@@ -84,7 +84,8 @@ project-root/
 ├── .gitignore
 ├── 4D-Plugin-SDK/                # Git submodule
 ├── VERSION                       # Semantic version file (e.g. "1.0.0")
-├── README.md
+├── README.md                     # English (primary)
+├── README.ja.md                  # Japanese translation
 └── {plugin-name}/                # e.g., "example/"
     ├── CMakeLists.txt            # Cross-platform build (CMake)
     ├── Info.plist.in             # macOS bundle Info.plist template (CRITICAL)
@@ -1055,6 +1056,8 @@ Generate a `README.md` in the project root with the following structure. Replace
 ````markdown
 # {name}
 
+English | [日本語](README.ja.md)
+
 {description}
 
 ## Requirements
@@ -1176,6 +1179,36 @@ Configure these in **Settings → Secrets and variables → Actions**:
 
 {license}
 ````
+
+### Japanese README (`README.ja.md`)
+
+Ship a Japanese translation next to the English `README.md`. English stays the
+primary, canonical text; `README.ja.md` follows it.
+
+- **Language switcher.** The line under the title is `English | [日本語](README.ja.md)`
+  in `README.md` and `[English](README.md) | 日本語` in `README.ja.md`.
+- **Same structure.** Keep the same sections in the same order, so both files have
+  the same headings, code blocks and links. Translate headings, prose and table
+  text, and anchors that point at translated headings (for example
+  `[アップグレード](#アップグレード)`).
+- **Do not translate:** code blocks, commands, file paths, command and constant
+  names, syntax tokens, UTIs, secret names, workflow and button names, and UI
+  labels the plugin or app actually shows. Comments in code blocks may be translated
+  when they explain a command to the reader; leave comments that describe code
+  identifiers (for example a source-tree diagram) in English.
+- **Use 4D's Japanese terms** as the Japanese 4D documentation uses them: データファイル,
+  ストラクチャファイル, テーブル, フィールド, レコード, リレーション, 主キー, インデックス,
+  ジャーナル, セレクション, フォーミュラ, ピクチャー, 読み込み・書き出し, コンポーネント, プラグイン.
+- **Keep it in sync.** Any change to `README.md` updates `README.ja.md` in the same
+  commit or PR. Before committing, fetch and rebase first: README changes that land
+  on the remote in the meantime must be translated too, not only your own. A quick
+  check that nothing was dropped:
+
+  ```bash
+  for f in README.md README.ja.md; do
+    echo "$f: $(grep -c '^#' "$f") headings, $(grep -c '^```' "$f") fences, $(grep -o '](http[^)]*)' "$f" | sort -u | wc -l) links"
+  done
+  ```
 
 ---
 
@@ -1530,6 +1563,7 @@ Given a plugin specification (name, commands, constants, behavior):
 
 ### 7. Documentation
 - [ ] Create `README.md` using the template (see [README Template](#readme-template))
+- [ ] Create `README.ja.md` and keep it in sync (see [Japanese README](#japanese-readme-readmejamd))
 - [ ] Document required GitHub Secrets for release workflow
 
 ---
