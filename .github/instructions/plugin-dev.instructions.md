@@ -263,9 +263,13 @@ Format: `command_name({params}):{return_type}`
 `Phonon SET VOLUME`; `&8` reads the value correctly, as existing plugins such as
 `4d-plugin-dock-tile` already declare it.
 
+**Object parameters use `&J`, not `&O`.** `&O` is a BLOB. An Object passed to an
+`&O` parameter raises no error, but `PA_GetObjectParameter` gets nothing usable
+(see [pitfall 17](#17-manifestjson-object-type-is-j-not-o-parameters-and-return-values)).
+
 **Return types** use letters after the closing parenthesis: `:T`, `:L`, `:J`
 (Object), `:C` (Collection), `:P` (Picture) and `:O`, which is a **BLOB** returned
-with `PA_ReturnBlob` (see [pitfall 17](#17-manifestjson-object-return-type-is-j-not-o)).
+with `PA_ReturnBlob` (see [pitfall 17](#17-manifestjson-object-type-is-j-not-o-parameters-and-return-values)).
 A Real return has not been verified with either letter; check it in a test
 method before relying on it.
 
@@ -656,6 +660,11 @@ Key points:
 - `ASSERT` prompts a dialog on failure; in headless mode, this aborts the process
 - The IDE auto-adds command token suffixes (e.g., `ASSERT:C1129`) — do not add them manually when editing `.4dm` files
 - Use `//` for line comments, `/* */` for block comments
+- Test every parameter with a **non-default** value and assert its effect, not only
+  the return code. A parameter that never reaches the plugin (for example an Object
+  declared as `&O`, see [pitfall 17](#17-manifestjson-object-type-is-j-not-o-parameters-and-return-values)) still returns
+  success, so `ASSERT($error=0)` passes. For example, after passing
+  `{format: "png"}`, check the picture codec with `GET PICTURE FORMATS`
 - 4D time literals: `?03:00:00?`
 - 4D conditional: `Case of / : (condition) / Else / End case`
 
@@ -1439,9 +1448,21 @@ PA_ReturnObject(params, PA_GetObjectVariable(result));
 
 On HFS+/APFS (default case-insensitive), directory names like `CLD2/` and `cld2/` refer to the **same** directory. If you name your plugin folder `CLD2` and add a git submodule at `cld2`, removing one destroys the other. **Fix:** use an unambiguous submodule name (e.g., `cld2-src`).
 
-### 17. manifest.json object return type is `J`, not `O`
+### 17. manifest.json object type is `J`, not `O` (parameters and return values)
 
-In 4D manifest syntax, the return type codes are:
+The same letters are used for parameters (`&J`) and return values (`:J`): `J` is an
+Object, `O` is a **BLOB**. `O` looks like "Object" but is not one.
+
+**Parameters.** Declare an Object parameter as `&J` and read it with
+`PA_GetObjectParameter`. With `&O`, 4D accepts the call without error, but the
+object never reaches the plugin, so every option silently falls back to its
+default. `4d-plugin-poppler` 1.4.0 shipped `PDF Convert(&O;&Y;&L;&L;&T;&T;&O):L`
+with an options object as the 7th parameter: `{format: "png"}` still produced SVG,
+and the command returned `0`. Changing the token to `&J` fixed it with no code
+change. If a signature already uses `&O` for a BLOB, check that every other `&O`
+in it is also meant to be a BLOB.
+
+**Return values.** In 4D manifest syntax, the return type codes are:
 - `T` — Text
 - `L` — Longint / Integer
 - Real — not verified as a return type (the working parameter token is `&8`, not `&R`)
@@ -1581,6 +1602,7 @@ Given a plugin specification (name, commands, constants, behavior):
 - [ ] Set `compatibilityVersion` in `.4DProject`
 - [ ] Create `folders.json` with "Tests" virtual folder
 - [ ] Create test methods with ASSERT statements
+- [ ] Cover each parameter with a non-default value whose effect is asserted
 - [ ] Create `test_all.4dm` runner method
 - [ ] Run tests locally with tool4d
 
