@@ -755,8 +755,11 @@ def validate_payload_content(payload, build):
     validate_pe(payload / p["win"])
     if sys.platform == "darwin":
         validate_macos(payload / p["mac"])
-    require((payload / p["mac"]).stat().st_mode & 0o111,
-            "macOS plugin executable permission is missing")
+    # Windows file systems cannot store the POSIX executable bit; the macOS jobs that
+    # assemble, sign and verify the distribution still require it.
+    if os.name != "nt":
+        require((payload / p["mac"]).stat().st_mode & 0o111,
+                "macOS plugin executable permission is missing")
     for name, command in (
             ("LICENSE", ["git", "show", f'{build["source_commit"]}:LICENSE']),
             ("SDK-LICENSE.md", ["git", "-C", config()["sdk_dir"], "show", f'{build["sdk_commit"]}:LICENSE.md'])):

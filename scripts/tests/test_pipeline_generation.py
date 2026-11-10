@@ -402,6 +402,30 @@ class PipelineGenerationTests(unittest.TestCase):
         for name in paths:
             self.assertEqual(git("show", ":" + name), b"first\nsecond\n")
 
+    def test_generated_files_stay_lf_in_an_autocrlf_checkout(self):
+        files = generator.generate(self.config, self.output, root=self.fixture)
+        attributes = files[".gitattributes"].decode()
+        for name in (*files, ".gitattributes", generator.MANIFEST):
+            self.assertIn(f"{name} text eol=lf\n", attributes)
+
+        def git(cwd, *args):
+            return subprocess.check_output(["git", *args], cwd=cwd, stderr=subprocess.DEVNULL)
+        git(self.output, "init", "-q")
+        git(self.output, "add", ".")
+        git(self.output, "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+            "commit", "-q", "-m", "generated")
+        clone = self.output.parent / "autocrlf-clone"
+        subprocess.check_call(["git", "-c", "core.autocrlf=true", "clone", "-q",
+                               str(self.output), str(clone)], stderr=subprocess.DEVNULL)
+        for name in files:
+            self.assertNotIn(b"\r\n", (clone / name).read_bytes(), name)
+        # The fixture's helpers are stand-ins; check the clone with the real checker.
+        spec = importlib.util.spec_from_file_location(
+            "real_check_pipeline", ROOT / "scripts" / "check_pipeline.py")
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        checker.check(clone)
+
     def test_attribute_drift_refused_and_source_substitutions(self):
         original = generator.generate(self.config, self.output, root=self.fixture)
         attributes = self.output / ".gitattributes"

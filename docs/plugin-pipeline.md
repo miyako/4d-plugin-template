@@ -58,7 +58,11 @@ missing managed files fail instead of being overwritten. The separately
 authorized `--replace-legacy-workflows` migration replaces only the three
 canonical workflow filenames, not unrelated workflows or helper files. Do not
 use migration mode to bypass ownership checks. Managed ignore and LF attributes
-preserve unrelated repository rules.
+preserve unrelated repository rules. The managed attributes keep every generated
+file LF, so a Windows checkout with `core.autocrlf` still passes the byte-for-byte
+ownership check. The packaging tests run on both test jobs; only the macOS
+executable-bit check is skipped on Windows, which cannot store it, and the macOS
+assembly, signing and verification jobs still enforce it.
 
 The existing example branch is the executable scaffold. Updating canonical
 `main` alone does not update that scaffold. Its subsequent branch-targeted

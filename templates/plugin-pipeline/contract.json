@@ -6,7 +6,7 @@
   "generated_contract": ".github/plugin-pipeline-contract.json",
   "ownership_manifest": ".github/plugin-pipeline-generated.json",
   "managed_gitignore": "additive root section; fingerprint excludes user patterns",
-  "managed_gitattributes": "additive final root section; source resources, VERSION and LICENSE text eol=lf; static dependency profile adds notices, vcpkg.json and vcpkg-triplets",
+  "managed_gitattributes": "additive final root section; source resources, VERSION, LICENSE and every generated file text eol=lf, so byte-for-byte ownership checks hold in autocrlf checkouts; static dependency profile adds notices, vcpkg.json and vcpkg-triplets",
   "dependency_profiles": {
     "[]": "baseline: system libraries only; Windows 4DX imports only allowlisted system DLLs",
     "static": "statically linked third-party libraries; payload stays one self-contained Mach-O and one 4DX, with THIRD-PARTY-NOTICES/ and THIRD-PARTY.json",
