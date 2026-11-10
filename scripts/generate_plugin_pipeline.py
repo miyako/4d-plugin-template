@@ -362,14 +362,17 @@ def render(config, root=ROOT):
         attributes.append(f"{dependencies['notices_dir']}/** text eol=lf")
         if enabled["VCPKG"]:
             attributes += ["vcpkg.json text eol=lf", "vcpkg-triplets/*.cmake text eol=lf"]
-    result[".gitattributes"] = (
-        ATTR_BEGIN + b"\n" + "\n".join(attributes).encode() + b"\n" + ATTR_END + b"\n"
-    )
     for source, destination in HELPER_FILES.items():
         path = root / source
         if not path.is_file():
             raise ValueError(f"Canonical helper not available: {source}")
         result[destination] = path.read_bytes()
+    # Ownership checks hash generated files byte for byte, so keep them LF in every
+    # checkout, including Windows runners where core.autocrlf would convert them.
+    attributes += [f"{name} text eol=lf" for name in sorted({*result, ".gitattributes", MANIFEST})]
+    result[".gitattributes"] = (
+        ATTR_BEGIN + b"\n" + "\n".join(attributes).encode() + b"\n" + ATTR_END + b"\n"
+    )
     return result
 
 

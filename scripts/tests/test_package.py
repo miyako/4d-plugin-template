@@ -3,6 +3,7 @@
 from contextlib import ExitStack
 import hashlib
 import json
+import os
 from pathlib import Path, PureWindowsPath
 import plistlib
 import shutil
@@ -468,6 +469,17 @@ class PackageTests(Fixture):
             package.inventory(payload, payload / "PROVENANCE.json", "AB12345678")
         with self.assertRaisesRegex(package.PackageError, "must be"):
             package.inventory(payload, payload / "other.json")
+
+    @unittest.skipIf(os.name == "nt", "Windows file systems have no POSIX executable bit")
+    def test_inventory_requires_macos_executable_permission(self):
+        payload = self.assemble()
+        paths = package.layout()
+        signature = payload / paths["signature"]
+        signature.parent.mkdir()
+        signature.write_bytes(b"signature")
+        (payload / paths["mac"]).chmod(0o644)
+        with self.assertRaisesRegex(package.PackageError, "executable permission"):
+            package.inventory(payload, payload / "PROVENANCE.json", "AB12345678")
 
     def test_fresh_output(self):
         self.output.mkdir()
