@@ -34,7 +34,10 @@ SIGNING_TEMP=$(python3 - "$BUILD_DIR" <<'PY'
 from pathlib import Path
 import sys
 import uuid
-path = Path(sys.argv[1]) / (".signing-" + uuid.uuid4().hex)
+# The signing job starts from a fresh checkout, where the build directory does not exist.
+build = Path(sys.argv[1])
+build.mkdir(parents=True, exist_ok=True)
+path = build / (".signing-" + uuid.uuid4().hex)
 path.mkdir(mode=0o700)
 print(path.absolute())
 PY

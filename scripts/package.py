@@ -502,7 +502,7 @@ def verify_hashes(payload, mapping, exclude=()):
 
 
 WINDOWS_SYSTEM_DLLS = frozenset(name + ".dll" for name in (
-    "advapi32", "bcrypt", "cfgmgr32", "comctl32", "comdlg32", "crypt32", "d2d1", "d3d11",
+    "advapi32", "bcrypt", "bcryptprimitives", "cfgmgr32", "comctl32", "comdlg32", "crypt32", "d2d1", "d3d11",
     "dbghelp", "dnsapi", "dwmapi", "dwrite", "dxgi", "gdi32", "gdiplus", "imm32", "iphlpapi",
     "kernel32", "mpr", "msimg32", "mswsock", "ncrypt", "netapi32", "normaliz", "ntdll",
     "ole32", "oleacc", "oleaut32", "opengl32", "psapi", "rpcrt4", "secur32", "setupapi",

@@ -85,6 +85,9 @@ def assert_contract(workflows, action, contract, config):
                     assert "${{ github.sha }}" in step["with"]["name"]
                 if step.get("uses", "").startswith("actions/upload-artifact@"):
                     assert step["with"]["if-no-files-found"] in ("error", "ignore")
+                    # upload-artifact@v4 treats a dot-directory as hidden and uploads nothing.
+                    if step["with"]["path"].startswith("."):
+                        assert step["with"].get("include-hidden-files") == "true", step["with"]["path"]
                 text = json.dumps(step)
                 if "secrets." in text:
                     assert filename == "release.yml" and job == "sign-package"

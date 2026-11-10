@@ -163,6 +163,12 @@ class SignPackageTests(Fixture):
         self.assertEqual(json.loads((self.root / "keychain-state").read_text()), self.original_keychains)
         self.assertEqual(list((self.root / "get-icon/build").glob(".signing-*")), [])
 
+    def test_signs_from_a_checkout_without_the_build_directory(self):
+        shutil.rmtree(self.root / "get-icon/build", ignore_errors=True)
+        result = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_cleaned()
+
     def test_success_restores_registration_and_final_checksums(self):
         result = self.execute()
         self.assertEqual(result.returncode, 0, result.stderr)

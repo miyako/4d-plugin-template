@@ -291,6 +291,14 @@ class PackageTests(Fixture):
             delay=("ext-ms-win-ntuser-window-l1-1-0.dll", "bcrypt.dll")))
         self.assertEqual(len(package.validate_pe(path)), 13)
 
+    def test_pe_rust_standard_library_imports_accepted(self):
+        # Rust 1.78+ imports ProcessPrng from bcryptprimitives.dll (System32, Windows 10+).
+        path = self.root / "rust.4DX"
+        path.write_bytes(make_pe(("KERNEL32.dll", "ntdll.dll", "USERENV.dll", "WS2_32.dll",
+                                  "dbghelp.dll", "bcryptprimitives.dll",
+                                  "api-ms-win-core-synch-l1-2-0.dll")))
+        self.assertEqual(len(package.validate_pe(path)), 7)
+
     def test_pe_rejects_runtime_and_third_party_imports(self):
         path = self.root / "bad.4DX"
         for name in ("VCRUNTIME140.dll", "vcruntime140_1.dll", "MSVCP140.dll", "msvcp140_atomic_wait.dll",
