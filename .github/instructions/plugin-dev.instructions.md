@@ -2503,3 +2503,110 @@ Prefer one of these designs:
 Never re-initialize a library from a convenience command while other processes may
 hold handles from it; that is also a use-after-free risk. If re-initialization is
 unavoidable, document that it resets all settings.
+
+### 39. Statically linked libraries are exported from the plugin (macOS)
+
+Marking the entry point visible ([pitfall 18](#18-windows-cross-platform-build-issues))
+does not hide anything else. When the plugin links a static library, every global
+symbol of that library becomes an export of the plugin binary, unless the library was
+compiled with hidden visibility, which upstream builds usually are not. The released
+`4d-plugin-svg-converter` 2.1.0 (librsvg, glib, cairo and pango linked statically)
+exports 5,746 symbols on arm64, 4,640 of them `g_*`, `cairo_*`, `pango_*` and
+`rsvg_*`. Two plugins in one 4D process that export the same library symbols can have
+their calls bound to each other's copy by the dynamic loader. That clash has not been
+observed here; the export count is measured.
+
+Export only the entry point:
+
+```cmake
+if(APPLE)
+    target_link_options(${PLUGIN_NAME} PRIVATE "LINKER:-exported_symbol,_FourDPackex")
+endif()
+```
+
+(In an Xcode project: `OTHER_LDFLAGS = $(inherited) -Wl,-exported_symbol,_FourDPackex`.)
+Check with `nm -arch arm64 -gU <binary>` and `nm -arch x86_64 -gU <binary>`: each
+should list only `_FourDPackex`. Rebuilding svg-converter this way linked universal
+cleanly, and a native `dlopen`/`dlsym` harness found `FourDPackex` with `g_malloc` and
+`rsvg_handle_new_from_data` hidden on both architectures. That is native evidence, not
+4D host acceptance: run the plugin's tool4d tests before releasing such a change.
+Windows needs nothing extra; the `.def` file already limits the 4DX's exports.
+
+### 40. Universal static builds of autotools dependencies (macOS)
+
+The [static dependency profile](../../docs/plugin-pipeline.md#macos-and-windows-none)
+asks for universal `arm64;x86_64` static libraries. A CMake dependency does that in one
+pass with `CMAKE_OSX_ARCHITECTURES`; an autotools (`./configure`) dependency does not:
+
+- **Build once per architecture and join with `lipo -create`.** `ar` cannot archive fat
+  objects, so a single `-arch arm64 -arch x86_64` pass fails or yields a one-slice
+  archive. (Compiling sources directly with both `-arch` flags and archiving with
+  Apple's `libtool -static` does work, because `libtool` accepts fat objects.)
+- **Force a cross build for each slice**: `--host=aarch64-apple-darwin` or
+  `--host=x86_64-apple-darwin`, plus `CC="clang -isysroot $(xcrun --show-sdk-path) -arch <arch> -mmacosx-version-min=<min>"`.
+  The explicit `-isysroot` keeps `/usr/local` and Homebrew headers and libraries out,
+  and the cross build stops `configure` from running test programs that would only
+  describe the build machine. Point `PKG_CONFIG_LIBDIR` at your own prefixes only.
+  Old `config.sub`/`config.guess` files may not know `aarch64-apple-darwin`; replace
+  them with newer copies.
+- **Generated configuration headers can differ per architecture.** glib's
+  `glibconfig.h` does. Do not copy one slice's header for both: install
+  `glibconfig-arm64.h` and `glibconfig-x86_64.h` and a small `glibconfig.h` that
+  includes the right one under `#if defined(__aarch64__)`. Diff the two slices'
+  installed headers and fail the build on any other difference.
+
+`4d-plugin-svg-converter` builds librsvg 2.40.21 and its stack this way
+([script](https://github.com/miyako/4d-plugin-svg-converter/blob/18fff9cb4a2ce9dc6eb83812a3cf11b8efda587c/scripts/build-macos-deps.sh)).
+It is a legacy repository outside the generated pipeline; in a generated plugin the
+same steps belong in the plugin's own CMake (for example `ExternalProject_Add` with
+per-architecture configure commands), not in ad-hoc workflow steps.
+
+### 41. Old C libraries on arm64: endianness and integer widths
+
+Platform detection in older C libraries often lists the little-endian CPUs it knows
+(`i386`, `x86_64`, `alpha`, `ia64`) and treats every other CPU as big-endian. arm64 is
+little-endian, so such a library compiles cleanly on Apple silicon and then reads and
+writes multi-byte values backwards. The same header may also choose integer typedefs by
+CPU. VersyPDF's `VSPlatform.h` did both: on arm64 it selected big-endian byte order and
+a different `ppInt32` definition than on x86_64.
+
+Before trusting an arm64 build of a vendored C library, search its platform headers for
+CPU lists (`__x86_64__`, `__i386__`, `BIG_ENDIAN`, `WORDS_BIGENDIAN`, `LITTLE_ENDIAN`)
+and add `__aarch64__`/`__arm64__` where needed, as a patch applied in the build tree.
+Then pin the widths the plugin relies on in the plugin's own code, so a mismatch fails
+the build instead of corrupting data:
+
+```c
+static_assert(sizeof(ppInt32) == 4 && sizeof(ppUns32) == 4, "ppInt32 must be 32-bit");
+```
+
+Compare outputs between arm64 and x86_64 (under Rosetta) for the same inputs. For
+`4d-plugin-sign-pdf-versy`, signed PDFs matched apart from dates, `/ID` and signature
+bytes ([source pin and patches](https://github.com/miyako/4d-plugin-sign-pdf-versy/blob/a8180db4f15c7b54ff5e73c62ce375d22a2d39d9/scripts/versypdf-source.sh),
+[plugin assert](https://github.com/miyako/4d-plugin-sign-pdf-versy/blob/1b93f0c85158a355b09ec9f278cd4fa2af51940b/4DPlugin-VersyPDF.h)).
+Rosetta runs are native evidence, not x86_64 4D acceptance.
+
+### 42. Bash scripts on Windows runners (Git Bash)
+
+The generated workflows run Windows steps in `pwsh` and already normalize
+`RUNNER_TEMP`. A repository's own `shell: bash` script on `windows-latest` runs in Git
+Bash, where three things differ from macOS and Linux:
+
+- **GNU `tar` reads `D:/...` as a remote `host:path`**: `tar -xzf D:/a/_temp/x.tar.gz`
+  fails with `Cannot connect to D: resolve failed`. Read the archive from stdin and
+  extract inside the target directory: `( cd "$dest" && tar -xzf - ) < "$archive"`.
+- **`RUNNER_TEMP` is a Windows path** (`D:\a\_temp`). Other tools accept it, but `tar -C`
+  does not (`Cannot open: No such file or directory`). Convert it once:
+  `command -v cygpath >/dev/null && TMPBASE="$(cygpath -u "$RUNNER_TEMP")"`.
+- **Arguments that start with `/` can be rewritten as paths** when passed to native
+  programs, so MSBuild switches such as `-- /m` are unsafe. Prefer the CMake form
+  (`cmake --build ... --parallel`). Flags written into a generated file by `echo` are
+  not affected.
+
+Each of these cost `4d-plugin-sign-pdf-versy` one failed release run
+([tar](https://github.com/miyako/4d-plugin-sign-pdf-versy/actions/runs/43054642759),
+[`RUNNER_TEMP`](https://github.com/miyako/4d-plugin-sign-pdf-versy/actions/runs/43056539478);
+fixes in [`cd2ae08`](https://github.com/miyako/4d-plugin-sign-pdf-versy/commit/cd2ae08391d1d9250f87c743c2aa9d273da745eb)
+and [`a8180db`](https://github.com/miyako/4d-plugin-sign-pdf-versy/commit/a8180db4f15c7b54ff5e73c62ce375d22a2d39d9)).
+The `/m` rewrite was fixed in the same change before it failed, so it is a precaution,
+not an observed failure.
