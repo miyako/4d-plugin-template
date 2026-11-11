@@ -68,6 +68,14 @@ A 4D plugin is a native dynamic library loaded by the 4D runtime at startup:
 - For system calls that require the main thread, use `PA_RunInMainProcess`.
 - 4D data types are **opaque structures** — always convert to/from C types via SDK utilities.
 
+Process/worker ownership, C++ library thread safety, and SDK/scheduler safety are
+separate requirements. A guarded handle registry enforces ownership; it does not
+prove preemptive safety. With `threadSafe:false`, synchronous native network waits
+can block the cooperative scheduler and UI **even in a worker**. Bound connect,
+read/write and shutdown waits, declare/document the execution model honestly,
+and do not describe a worker as making blocking SDK commands preemptive.
+Library background threads must not call the SDK outside a valid invocation.
+
 ---
 
 ## Project Setup
@@ -418,6 +426,69 @@ Use `#ifdef _WIN32` for Windows-specific code:
 ```
 
 MSVC treats many standard C functions as deprecated (`localtime`, `strcpy`, etc.). Use the `_s` variants on Windows to avoid build errors.
+
+### Typed BLOB output and staged ownership
+
+For writable raw-byte output, use a real BLOB variable parameter (`&O`), not
+Pointer (`&Z`) or an Object (`&J`) property. The SDK adapter cannot return a BLOB
+as an Object property through this path, even though the 4D language can contain
+one. Return metadata as an Object and bytes through the typed BLOB; no base64
+detour is needed. This is distinct from the Text-pointer recipe in pitfall 23.
+
+The pinned [Redis adapter](https://github.com/miyako/4d-plugin-redis/blob/v0.1.2/redis/redis-4dplugin.cpp)
+(`BlobOutput` and `dispatch`) is a host-validated reference, not a generic wrapper
+to copy blindly. Its [manifest](https://github.com/miyako/4d-plugin-redis/blob/v0.1.2/redis/manifest.json)
+declares `REDIS Get blob(&L;&T;&O):J`; the caller passes `$blob`, not `->$blob`.
+Its macOS arm64 tool4d **21.0 build 21.100301** run observed
+`PA_SetBlobVariable` / `FromUserData` returning `eER_CallNotImplemented` (-1).
+That is a scoped host observation, not evidence that every legacy setter fails
+on every runtime.
+
+At SDK pin [`ad7944b`](https://github.com/4d/4D-Plugin-SDK/blob/ad7944bc7a13d93db8097c4c8ff55ba2f6e36f86/4D%20Plugin%20API/4DPluginAPI.c#L2462-L2479),
+`PA_SetBlobParameter` calls `FromUserData`, whereas
+`PA_SetBlobHandleParameter` directly assigns the supplied handle to the
+1-based parameter slot. The latter is `void`, performs no allocation/conversion,
+does not dispose the old handle, and does not set a fresh SDK error. Do not
+interpret an earlier `PA_GetLastError()` value as a transfer failure or manually
+dispose the caller's previous value. Use only a validated, present typed BLOB
+parameter slot and transfer once.
+
+The staging recipe, entirely within the valid SDK invocation, is:
+
+1. Validate inputs and byte length before narrowing to `PA_long32`. Finish the
+   operation without modifying the caller's BLOB.
+2. For nonempty bytes, allocate with `PA_NewHandle`, check both the handle and
+   immediate SDK error, lock with `PA_LockHandle`, check the buffer, copy the exact
+   bytes, and unlock. A noncopyable RAII owner must dispose only uncommitted
+   handles, including constructor failure after allocation or lock failure.
+3. Finish conversions and construct/validate the result Object before caller
+   mutation. If allocation, conversion or result construction fails, report the
+   error and leave the original BLOB unchanged; unwind the staged handle.
+4. On success only, call `PA_SetBlobHandleParameter` and immediately clear local
+   ownership. The runtime now owns the handle; never dispose it after transfer.
+   For successful empty output or a miss, transfer a null handle to clear the
+   BLOB without allocating a zero-length handle. Never clear on operation failure.
+
+Preserve these observable distinctions, testing the normal and operation-error
+paths in the actual host and injecting staging failures where practical:
+
+| Outcome | Metadata | Caller BLOB |
+|---|---|---|
+| Existing nonempty value | success, `found:true` | Exact raw bytes, including NUL and non-UTF-8 |
+| Existing empty value | success, `found:true` | Empty |
+| Missing value | success, `found:false` | Empty |
+| Operation/allocation/lock/conversion/result-construction failure | Explicit error | Original sentinel bytes unchanged |
+
+Use native fault injection for staged-handle disposal/one-time transfer paths
+where practical, but do not call it host ownership acceptance. The reference's
+[qualification record](https://github.com/miyako/4d-plugin-redis/blob/7775bbf1441f8ca4a167508f860f5b218fa4a572/docs/validation.md)
+records the real `[0,255,65,0,128]` host round trip, miss-clears, empty output,
+ordinary failure-preserves and remaining platform gaps. Allocation-failure
+safety is structural staging evidence, not a live-host OOM test; no host OOM was
+deliberately forced. `main` here owns
+guidance/pipeline tests, not that SDK adapter; the greeting scaffold on `example`
+has no BLOB command. Do not add a competing unqualified adapter to the generator
+or claim scaffold synchronization.
 
 ### Working with 4D Pictures
 
@@ -942,6 +1013,16 @@ Generate a unique UUID (32 hex characters, uppercase) for each project.
   still be `0` (observed with tool4d 21.2 on macOS), so a local script must check for the exact
   `PASS` line, as the generated tool4d action does, not only the exit status
 
+Prove the runner negatively in the actual target host: temporarily insert
+`ASSERT(False)` before the success marker and require the harness to fail with
+no exact `PASS` line, then restore and rerun. Redis also observed assertion
+failure with exit `0` on arm64 tool4d 21.0 build 21.100301. Do not install an
+assertion/error handler that logs and resumes through `PASS`; if a handler is
+necessary, propagate a failed-test state and suppress the success marker.
+Preserve **both** zero exit status and exact `PASS`, including its line ending.
+See the [qualification matrix](../../docs/plugin-pipeline.md#qualification-and-evidence)
+for what offline host tests do and do not establish.
+
 ### Download URLs
 
 ```
@@ -1185,6 +1266,11 @@ Requires [tool4d](https://developer.4d.com/docs/Admin/cli/) (free, no license ne
 ```bash
 /path/to/tool4d --dataless --startup-method=test_all --project=$(pwd)/{name}-test/Project/{name}.4DProject
 ```
+
+Record host version/build, OS/architecture, backend version, commands exercised
+and remaining gates. Distinguish native/fixture tests, offline tool4d tests,
+live-backend host acceptance and packaged-host smoke tests. Require exit status
+0 **and an exact `PASS` line**; the command's exit status alone is insufficient.
 
 ## CI/CD
 
@@ -1646,6 +1732,12 @@ Given a plugin specification (name, commands, constants, behavior):
 - [ ] Create `README.md` using the template (see [README Template](#readme-template))
 - [ ] Create `README.ja.md` and keep it in sync (see [Japanese README](#japanese-readme-readmejamd))
 - [ ] Document required GitHub Secrets for release workflow
+- [ ] Record tested configurations and remaining gates using the
+      [qualification matrix](../../docs/plugin-pipeline.md#qualification-and-evidence)
+- [ ] After authorized production publication, complete the
+      [documentation handoff](../../docs/plugin-pipeline.md#post-release-documentation-handoff):
+      verify public assets/receipts, refresh installation text and translations,
+      and retain unqualified platform/backend cases
 
 ---
 
@@ -2261,6 +2353,12 @@ generated (`configure_file` for `config.h.in` and version headers, `file(WRITE)`
 export header that defines the export macro as empty). `4d-plugin-cmark-gfm` does this;
 it also avoids building the library's tools and tests.
 
+For build-time `ExternalProject` libraries, imported targets alone do not ensure
+downstream `find_package` succeeds. See
+[private dependency discovery](../../docs/plugin-pipeline.md#private-build-time-dependency-discovery)
+for scoped config/provider discovery and fail-fast interface checks before
+editing dependency lists.
+
 ### 34. Test methods: `=` on Text ignores kana type, width and case
 
 4D compares Text with its collation, not by character codes: `"か"="カ"`,
@@ -2295,3 +2393,28 @@ LOG EVENT(Into system standard outputs; "PASS"+Char(Line feed); Information mess
 
 A line feed alone is enough on both platforms; the action still sees the exact `PASS`
 line on Windows.
+
+### 36. Portable adversarial network fixtures
+
+When advertising `localhost`, listen on both IPv4 `127.0.0.1` and IPv6 `::1` if
+DNS advertises both. Use the same port, IPv6-only socket mode where appropriate,
+and service whichever listener is ready. Do not depend on refused-IPv6 fallback
+completing within a short client deadline. Bind only loopback, never wildcard
+`0.0.0.0` / `::` or public interfaces; report unavailable required families
+explicitly rather than silently dropping advertised coverage.
+
+On Windows an intentional late write after client disconnect may raise
+`ConnectionAbortedError` (10053), not only `BrokenPipeError` or
+`ConnectionResetError`. Tolerate these only around the deliberately broken or
+late-response write, not around setup, normal traffic or the whole suite.
+Still require the client's exact expected failure/outcome, connection
+invalidation and no-replay assertions; unexpected fixture exceptions must fail.
+Do not lengthen production timeouts to make a faulty fixture pass.
+
+For Windows CMake `-D` path values use forward slashes (for example
+`Path(...).as_posix()` in a Python runner); native backslashes embedded in
+generated `try_compile` CMake input can be parsed as escapes.
+The pinned [transport fixtures](https://github.com/miyako/4d-plugin-redis/blob/v0.1.2/redis/tests/transport.py)
+and [configuration regressions](https://github.com/miyako/4d-plugin-redis/blob/v0.1.2/scripts/tests/test_cmake_dependencies.py)
+show these scoped practices. They exercise portable failures, not real-backend
+host acceptance.

@@ -276,6 +276,72 @@ first line naming the pinned version and URL.
 
 The baseline workflows are unchanged for `dependencies: []`.
 
+### Private build-time dependency discovery
+
+An imported target pointing at an `ExternalProject` byproduct does not necessarily
+satisfy a downstream `find_package`. During a fresh Windows configure,
+FindOpenSSL re-searched future, unbuilt static-library paths and overwrote output
+variables; Boost.Redis returned early with an incomplete interface. Appending to
+an unchecked `get_target_property` result then leaked
+`_redis_dependencies-NOTFOUND.lib` to the linker
+([failure run](https://github.com/miyako/4d-plugin-redis/actions/runs/43025019922)).
+
+For private build dependencies, provide a project-owned package config or
+dependency provider scoped to the consuming subproject. It must describe the
+real pinned targets, version, components, static link closure and build ordering;
+do not merely set `FOUND` to bypass a required dependency. Prevent accidental
+system discovery/fallback. An existing imported target and a future library path
+are not evidence that a package finder will accept them.
+
+Before reading/modifying a dependency list, assert that the required targets
+exist, the required property is set and nonempty (where required by that
+library), and no value is `NOTFOUND` / ends in `-NOTFOUND`. Validate the expected
+dependency interface, not just target existence; do not append to an unchecked
+sentinel or silently replace an incomplete interface with an empty list.
+
+The pinned [private OpenSSL config](https://github.com/miyako/4d-plugin-redis/blob/v0.1.2/redis/cmake/OpenSSLConfig.cmake.in),
+[scoped consumer](https://github.com/miyako/4d-plugin-redis/blob/v0.1.2/redis/CMakeLists.txt)
+and [configuration regressions](https://github.com/miyako/4d-plugin-redis/blob/v0.1.2/scripts/tests/test_cmake_dependencies.py)
+are a concrete example, not new generator inputs or universal OpenSSL/Boost
+template logic. For projects owning such dependencies, configure a fresh build
+with no archives present and a deliberately failing system finder; the private
+package must still resolve. Then supply a disabled/incomplete consumer interface
+and require an actionable **configuration** failure, not a late linker failure.
+Use forward-slash Windows `-D` paths, including paths forwarded to `try_compile`.
+This repository's current overlay uses only the SDK/CoreGraphics, so dependency
+regressions belong with the dependency-owning implementation, not a fake Boost
+interface added to the baseline.
+
+## Qualification and evidence
+
+Keep a per-project matrix with source SHA, run/log link, exact host version/build,
+OS/architecture, backend version/configuration, result and remaining gates. A
+build target or minimum deployment setting is not runtime qualification.
+
+| Layer | Establishes | Does not establish |
+|---|---|---|
+| Native units | Exercised C/C++ behavior, bounds and injected failure paths | Manifest tokens, SDK ownership or scheduler behavior |
+| Portable/fake backend fixtures | Exact wire bytes, deadlines, TLS/failure outcomes and invalidation under controlled peers | Actual live-backend semantics or hosted-provider trust/routing |
+| Offline tool4d | Exercised manifest/SDK/validation paths on the named runtime | Unexecuted live operations, CAS, BLOB round trips or worker cleanup |
+| Live-backend host acceptance | Actual typed host calls, backend semantics and lifecycle paths explicitly asserted | Other runtimes, backends, termination modes or preemptive safety |
+| Architecture/platform execution | Named binary executed on the named OS/host | Windows compilation is not Windows host qualification; Rosetta native tests are not Intel-host or x86_64 4D acceptance |
+| Packaged-host smoke | Extracted package loads and its exercised host tests pass | Live integration if smoke is offline; production signing if seal is ad-hoc |
+| Production acceptance | Verified Developer ID/runtime/timestamp, Accepted ZIP/DMG notarization, stapling/Gatekeeper and final bytes | Windows Authenticode or every end-user installation |
+
+For CAS, typed BLOB preservation/clearing, worker ownership/termination or similar
+claims, name the actual relevant host assertions; native-only evidence is not a
+substitute. Keep the existing exact-`PASS` plus zero-exit harness and prove a
+temporary negative assertion fails in the actual host, not only in a simulated
+runner. The [development guide](../.github/instructions/plugin-dev.instructions.md#exit-behavior)
+describes assertion/error-handler behavior.
+
+For example, Redis's
+[refreshed qualification record](https://github.com/miyako/4d-plugin-redis/blob/7775bbf1441f8ca4a167508f860f5b218fa4a572/docs/validation.md)
+distinguishes actual authenticated Redis 7.2.9 + arm64 tool4d 21.0 text/BLOB/worker
+acceptance from Windows native/fixtures/offline-host CI and Rosetta native runs.
+Its Windows live-backend typed-host acceptance and Intel/x86_64 4D acceptance
+remain open even after production macOS package acceptance.
+
 ## Credentials
 
 Use the [canonical user-run credential instructions](../.github/instructions/plugin-dev.instructions.md#required-github-secrets-for-release).
@@ -333,3 +399,41 @@ distinction is explicit in its report. Production `publish_release.py` verifies
 the final distribution, refuses an existing release or conflicting tag, creates
 a draft, downloads and checks its bytes, rechecks the tag SHA and only then
 publishes. Do not run that publication helper without separate authorization.
+
+### Post-release documentation handoff
+
+After an authorized production release succeeds, refresh download/install
+guidance, directly related translations and qualification evidence in the same
+documentation change. Remove stale permanent "no release published" notices,
+but retain still-unqualified cases. This checklist is not publication permission
+and adds no workflow to **Bump version / Build and Test / Build and Release**.
+
+1. Verify the public release's tag/source, `draft:false`, `prerelease` status and
+   actual assets. A successful draft-creation step is not public publication.
+   Do not call a prerelease stable or infer publication from a green build.
+2. Verify actual archive names and extracted bundle layout before writing
+   installation instructions. Retain checksums, source/run provenance and
+   final-byte verification; metadata checks alone do not accept archive contents.
+3. Verify signature acceptance and the ZIP/DMG notarization receipts with
+   `status: Accepted`, plus the required DMG stapling/Gatekeeper and packaged-host
+   smoke results. Configured credentials are not completed signing; ad-hoc test
+   sealing is not Developer ID production signing. macOS bundle signing does not
+   sign the Windows 4DX: state Windows Authenticode status separately.
+4. Record the released version, immutable source/run, exercised configurations
+   and remaining gates; synchronize translated installation/qualification text.
+   A production-signed offline smoke still does not qualify live Windows calls.
+
+The [Redis 0.1.2 public release](https://github.com/miyako/4d-plugin-redis/releases/tag/v0.1.2)
+illustrates the distinction: its
+[production run](https://github.com/miyako/4d-plugin-redis/actions/runs/43036770788)
+at `3e08ea357da57c85155066366b159cf692e8b2a3` succeeded, and publication was
+separately confirmed (`draft:false`, `prerelease:false`, published
+`2026-11-11T14:38:10Z`). Assets include `redis-0.1.2.zip`, `redis-0.1.2.dmg`,
+`SHA256SUMS`, `PROVENANCE.json`, `zip-notarization.json` and
+`dmg-notarization.json`; both receipts report `Accepted`. The combined
+`redis.bundle` contains `Contents/MacOS/redis` and
+`Contents/Windows64/redis.4DX`. Its
+[documentation refresh](https://github.com/miyako/4d-plugin-redis/commit/7775bbf1441f8ca4a167508f860f5b218fa4a572)
+replaced stale pre-release claims while keeping the unsigned Windows executable
+and live-Windows-host qualification gap explicit. This historical evidence is
+not a blanket claim about future releases.

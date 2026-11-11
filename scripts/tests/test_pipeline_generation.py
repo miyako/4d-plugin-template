@@ -749,6 +749,33 @@ class PipelineGenerationTests(unittest.TestCase):
                                     capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
 
+    def test_tool4d_bash_runner_requires_exact_pass_and_zero_exit(self):
+        action = yaml.load(self.rendered()[".github/actions/tool4d-test/action.yml"],
+                           Loader=yaml.BaseLoader)
+        snippet = action["runs"]["steps"][1]["run"]
+        runtime = self.output / ".local-tools/tool4d.app/Contents/MacOS/tool4d"
+        runtime.parent.mkdir(parents=True)
+        runtime.write_text('#!/bin/bash\nprintf "%s" "$FAKE_OUTPUT"\nexit "$FAKE_EXIT"\n')
+        runtime.chmod(0o755)
+        environment = {**os.environ, "TEST_PROJECT": self.config["test_project"],
+                       "STARTUP_METHOD": self.config["startup_method"]}
+        for output, exit_code, succeeds in (
+                ("PASS\n", 0, True),
+                ("diagnostic\nPASS\nwarning\n", 0, True),
+                ("ASSERT(False) failed\n", 0, False),
+                ("", 0, False),
+                ("PASStool4d warning\n", 0, False),
+                ("NOT PASS\n", 0, False),
+                ("PASS\n", 1, False)):
+            with self.subTest(output=output, exit_code=exit_code):
+                result = subprocess.run(
+                    ["bash"], input=snippet, cwd=self.output, capture_output=True,
+                    text=True, timeout=10,
+                    env={**environment, "FAKE_OUTPUT": output, "FAKE_EXIT": str(exit_code)},
+                )
+                self.assertEqual(result.returncode == 0, succeeds,
+                                 result.stdout + result.stderr)
+
     def test_valid_alternate_config(self):
         self.config.update(
             product="sample-plugin", source_dir="plugins/sample", build_dir="plugins/sample/build",
