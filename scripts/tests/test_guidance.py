@@ -33,6 +33,21 @@ class GuidanceTests(unittest.TestCase):
         self.assertIn("is not Windows host qualification", guide)
         self.assertIn("not host-qualified", guide)
 
+    def test_static_link_universal_arm64_and_git_bash_guidance(self):
+        guide = (ROOT / ".github/instructions/plugin-dev.instructions.md").read_text()
+        docs = (ROOT / "docs/plugin-pipeline.md").read_text()
+        for heading in ("### 39. Statically linked libraries are exported from the plugin (macOS)",
+                        "### 40. Universal static builds of autotools dependencies (macOS)",
+                        "### 41. Old C libraries on arm64: endianness and integer widths",
+                        "### 42. Bash scripts on Windows runners (Git Bash)"):
+            self.assertIn(heading, guide)
+        self.assertIn('"LINKER:-exported_symbol,_FourDPackex"', guide)
+        self.assertIn("#18-windows-cross-platform-build-issues", guide)
+        self.assertIn("### macOS and `\"windows\": \"none\"`", docs)
+        self.assertIn("plugin-pipeline.md#macos-and-windows-none", guide)
+        self.assertIn('( cd "$dest" && tar -xzf - ) < "$archive"', guide)
+        self.assertIn("Rosetta runs are native evidence, not x86_64 4D acceptance.", guide)
+
     def test_pipeline_docs_distinguish_permissions_without_local_install_history(self):
         docs = (ROOT / "docs/plugin-pipeline.md").read_text()
         self.assertIn("within the release workflow", docs)
