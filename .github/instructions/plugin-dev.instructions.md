@@ -672,6 +672,8 @@ Key points:
   declared as `&O`, see [pitfall 17](#17-manifestjson-object-type-is-j-not-o-parameters-and-return-values)) still returns
   success, so `ASSERT($error=0)` passes. For example, after passing
   `{format: "png"}`, check the picture codec with `GET PICTURE FORMATS`
+- Compare text results by character codes when kana, width or case matters: `=` on
+  Text ignores them (see [pitfall 34](#34-test-methods--on-text-ignores-kana-type-width-and-case))
 - 4D time literals: `?03:00:00?`
 - 4D conditional: `Case of / : (condition) / Else / End case`
 
@@ -684,7 +686,7 @@ If (Application info.headless)
     test_{command1}
     test_{command2}
 
-    LOG EVENT(Into system standard outputs; "PASS"; Information message)
+    LOG EVENT(Into system standard outputs; "PASS"+Char(Line feed); Information message)
 
 End if
 ```
@@ -693,7 +695,8 @@ End if
 
 - Guards with `Application info.headless` — only runs in CLI mode (tool4d)
 - Calls all individual test methods
-- Outputs "PASS" to stdout on success
+- Outputs "PASS" to stdout on success, ending the line so that nothing tool4d prints
+  afterwards joins it (see [pitfall 35](#35-tool4d-warning-printed-on-the-pass-line))
 - If any `ASSERT` fails in headless mode: dialog → auto-abort → "PASS" is never printed. The exit status
   can still be `0` (tool4d 21.2 on macOS exits `0` after a failed `ASSERT`), so the `PASS` line is the
   only reliable signal; the generated tool4d action requires both
@@ -2257,3 +2260,38 @@ target in the plugin's own CMake and write the few headers its CMake would have
 generated (`configure_file` for `config.h.in` and version headers, `file(WRITE)` for an
 export header that defines the export macro as empty). `4d-plugin-cmark-gfm` does this;
 it also avoids building the library's tools and tests.
+
+### 34. Test methods: `=` on Text ignores kana type, width and case
+
+4D compares Text with its collation, not by character codes: `"か"="カ"`,
+`"ｶﾞ"="ガ"`, `"Ａ"="A"` and `"a"="A"` are all `True`. An `ASSERT` that checks a
+conversion with `=` therefore passes whatever the plugin returns. In
+`4d-plugin-input-method-manager-v2` every kana-conversion assertion passed this way; the
+deliberately wrong `ASSERT` from the [checklist](#4-4d-test-project) still printed `PASS`,
+which is how it was found. Compare by character codes in a small helper:
+
+```4d
+//%attributes = {"invisible":true,"preemptive":"capable"}
+#DECLARE($actual : Text; $expected : Text)
+ASSERT(Compare strings($actual; $expected; sk char codes)=0; "expected \""+$expected+"\", got \""+$actual+"\"")
+```
+
+and call it as `assert_text(IM Convert kana("か"; IM kana katakana); "カ")`. Do the
+deliberately wrong check with a value that differs only in kana type, width or case,
+not only with an obviously different string.
+
+### 35. tool4d warning printed on the `PASS` line
+
+`LOG EVENT(Into system standard outputs; "PASS"; ...)` writes no line end. If tool4d
+then prints a warning, it lands on the same line: on the Windows runner,
+`4d-plugin-input-method-manager-v2` printed
+`PASStool4d.APPL Cooperative process doesn't yield enough (executionTime=1911, ...)`
+after a test that loaded a slow COM server, and the generated action, which requires an
+exact `PASS` line, failed although every test had passed. End the line:
+
+```4d
+LOG EVENT(Into system standard outputs; "PASS"+Char(Line feed); Information message)
+```
+
+A line feed alone is enough on both platforms; the action still sees the exact `PASS`
+line on Windows.
