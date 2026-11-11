@@ -2197,7 +2197,11 @@ not add ad-hoc download steps to generated workflows.
 
 **Committable artifacts** (small, no license issue):
 - Header files (`.h`) — type definitions and function declarations
-- Import libraries (`.lib` on Windows) — just symbol stubs, not runtime code
+- Import libraries (`.lib` on Windows) are small symbol stubs, but they bind the
+  4DX to a DLL at run time. The generated pipeline's Windows import gate accepts
+  only system DLLs, so an import library for a third-party DLL does not fit it.
+  See [pitfall 37](#37-vendored-windows-libraries-must-match-headers-crt-and-toolset)
+  for telling import, LTCG and static archives apart.
 
 ### 28. Test methods: no member access directly on a parameterless plugin command
 
@@ -2418,3 +2422,84 @@ The pinned [transport fixtures](https://github.com/miyako/4d-plugin-redis/blob/v
 and [configuration regressions](https://github.com/miyako/4d-plugin-redis/blob/v0.1.2/scripts/tests/test_cmake_dependencies.py)
 show these scoped practices. They exercise portable failures, not real-backend
 host acceptance.
+
+### 37. Vendored Windows libraries must match headers, CRT and toolset
+
+The generated pipeline builds third-party code through the
+[static dependency profile](../../docs/plugin-pipeline.md#static-third-party-dependency-profile).
+Older repositories, and libraries adopted from them, often carry prebuilt
+`lib/windows64/*.lib` files next to vendored headers instead. Such a `.lib` can
+look fine and still fail in three ways that a macOS build never shows:
+
+- **Header version drift.** `4d-plugin-tesseract-v2` moved its shared
+  `include/json` to jsoncpp 1.9.4 for an Apple-silicon build, but its
+  `lib/Windows64/jsoncpp.lib` stayed a 1.8.x build. The first CI Windows link failed
+  with `LNK2001` on `Json::Value::operator=(Value&&)` and the const
+  `ValueIteratorBase::deref()`
+  ([failure run](https://github.com/miyako/4d-plugin-tesseract-v2/actions/runs/43037336318)).
+  The library's CRT and compiler matched the project; only a symbol declared by the
+  header version showed the mismatch. Mixing header and library versions is an ODR
+  risk even when it happens to link.
+- **LTCG objects.** Objects compiled with `/GL` are bound to the exact compiler
+  that produced them; any other toolset fails with `C1047`/`LNK1257`. A v140 `/GL`
+  archive does not link with v143 or v145.
+- **Import libraries.** A `.lib` made of import members belongs to a DLL that must
+  ship beside the 4DX (see [pitfall 27](#27-cicd-vendored-third-party-libraries)).
+
+[`scripts/check_windows_libs.py`](../../scripts/check_windows_libs.py) inspects the
+archive without MSVC and exits nonzero on LTCG objects, import members, a CRT
+mismatch or a missing symbol:
+
+```sh
+python3 -I scripts/check_windows_libs.py --crt MT_StaticRelease \
+  --symbol '??4Value@Json@@QEAAAEAV01@$$QEAV01@@Z' lib/windows64/jsoncpp.lib
+```
+
+Choose `--symbol` values that only the vendored header version declares (here the
+jsoncpp 1.9 move assignment; 1.8.x exports the by-value
+`??4Value@Json@@QEAAAEAV01@V01@@Z`). Run it before a repository's first Windows CI
+build. The check is static inspection only: it does not link, load or run the
+library, and passing it is not Windows host qualification.
+
+The fix is the one the profile already prescribes: build the library from the
+source release that matches the vendored headers, with the plugin's toolset and
+static CRT (`CMAKE_MSVC_RUNTIME_LIBRARY`; see pitfalls 7 and 33). In tesseract-v2,
+a legacy repository outside the generated pipeline, a cached step builds jsoncpp
+1.9.4 (SHA-256-pinned tarball, `-T` set to the plugin's toolset, `/MT`) and the
+stale `.lib` is no longer tracked
+([commit](https://github.com/miyako/4d-plugin-tesseract-v2/commit/003d17daf7fcdbb10b8943160c9c1be34722b97d),
+[successful run](https://github.com/miyako/4d-plugin-tesseract-v2/actions/runs/43039106856)).
+That run establishes a Windows compile and link plus a macOS production package; it
+does not establish Windows host behavior. Generated workflows must not copy its
+ad-hoc download step.
+
+### 38. Native state that must survive between commands
+
+When each command opens a native handle, uses it and closes it again, a setting
+made by one command survives to the next only if the library keeps it outside the
+handle. That is an implementation detail of the library, not a guarantee, and any
+command that re-initializes the library silently resets it.
+
+`4d-plugin-sane` shows the pattern. `SANE SET SCAN OPTION`, `SANE Get scan option`
+and `SANE Scan` each call `sane_open` and `sane_close`, while `SANE Scanners list`
+calls `sane_exit` and `sane_init` to refresh the device list
+([source](https://github.com/miyako/4d-plugin-sane/blob/93b264a53f0c6fedf141aab10560d96eb3f4e093/4DPlugin-SANE.cpp#L618-L678)).
+In the SANE Fujitsu backend, `sane_close` only disconnects; option values such as
+`source = "ADF Duplex"` live on the device structure, which `sane_exit` frees
+([sane-backends 1.1.1 `fujitsu.c`](https://gitlab.com/sane-project/backends/-/blob/1.1.1/backend/fujitsu.c#L9184-L9251)).
+So a duplex setting made before `SANE Scanners list` is lost, and other backends
+may not keep options across `sane_open` at all. This was traced from source; it
+has not been reproduced with a scanner, so it is not host-qualified.
+
+Prefer one of these designs:
+
+- Accept the settings as a parameter of the command that uses them (an Object
+  `&J`), and apply them on the same handle immediately before the operation.
+- Keep the native handle open across commands in a handle table
+  ([pitfall 25](#25-native-pointers-exceed-pa_long32)) with explicit open and close
+  commands, following the ownership rules in
+  [Background threads, per-process errors and cleanup](#31-background-threads-per-process-errors-and-cleanup).
+
+Never re-initialize a library from a convenience command while other processes may
+hold handles from it; that is also a use-after-free risk. If re-initialization is
+unavoidable, document that it resets all settings.

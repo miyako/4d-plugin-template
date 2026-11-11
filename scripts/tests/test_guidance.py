@@ -23,6 +23,16 @@ class GuidanceTests(unittest.TestCase):
         self.assertIn('MACOSX_BUNDLE_BUNDLE_VERSION "${PLUGIN_VERSION}"', guide)
         self.assertNotIn('MACOSX_BUNDLE_BUNDLE_VERSION "1.0"', guide)
 
+    def test_vendored_windows_libraries_are_checked_not_assumed_safe(self):
+        guide = (ROOT / ".github/instructions/plugin-dev.instructions.md").read_text()
+        self.assertNotIn("just symbol stubs, not runtime code", guide)
+        self.assertIn("../../scripts/check_windows_libs.py", guide)
+        self.assertTrue((ROOT / "scripts/check_windows_libs.py").is_file())
+        self.assertIn("#37-vendored-windows-libraries-must-match-headers-crt-and-toolset", guide)
+        self.assertIn("### 37. Vendored Windows libraries must match headers, CRT and toolset", guide)
+        self.assertIn("is not Windows host qualification", guide)
+        self.assertIn("not host-qualified", guide)
+
     def test_pipeline_docs_distinguish_permissions_without_local_install_history(self):
         docs = (ROOT / "docs/plugin-pipeline.md").read_text()
         self.assertIn("within the release workflow", docs)
