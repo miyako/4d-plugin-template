@@ -37,7 +37,7 @@
       "permissions": {"contents": "read"}
     },
     "release.yml": {
-      "name": "Build and Release",
+      "name": "Build",
       "events": ["workflow_dispatch"],
       "jobs": {"authorize": [], "build": ["authorize"], "sign-package": ["build"], "publish": ["sign-package"]},
       "permissions": {"contents": "read"}

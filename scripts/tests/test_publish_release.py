@@ -76,6 +76,48 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(self.verify.call_count, 2)
         self.assertEqual([item[0] for item in self.mutations], ["tag", "create", "download", "edit"])
 
+    def test_preflight_is_read_only_without_native_or_distribution_work(self):
+        repository, binding, tag, remote_ref = publish.preflight()
+        self.assertEqual((repository, binding, tag, remote_ref),
+                         ("owner/plugin", BINDING, "v1.2.3", None))
+        self.assertEqual(self.mutations, [])
+        self.verify.assert_not_called()
+
+    def test_preflight_rejects_released_version_and_conflicting_tag(self):
+        self.release_exists = True
+        with self.assertRaisesRegex(ValueError, "already has a release"):
+            publish.preflight()
+        self.release_exists = False
+        self.tag_exists = True
+        self.tag_sha = "c" * 40
+        with self.assertRaisesRegex(ValueError, "another source"):
+            publish.preflight()
+        self.assertEqual(self.mutations, [])
+        self.verify.assert_not_called()
+
+    def test_preflight_source_drift_and_api_failure_stop_without_mutation(self):
+        with patch.object(publish.package, "snapshot", side_effect=ValueError("VERSION drift")):
+            with self.assertRaisesRegex(ValueError, "VERSION drift"):
+                publish.preflight()
+        with patch.object(publish, "api", side_effect=ValueError("API unavailable")):
+            with self.assertRaisesRegex(ValueError, "API unavailable"):
+                publish.preflight()
+        self.assertEqual(self.mutations, [])
+        self.verify.assert_not_called()
+
+    def test_preflight_same_sha_orphan_tag_is_read_only(self):
+        self.tag_exists = True
+        publish.preflight()
+        self.assertEqual(self.mutations, [])
+        self.verify.assert_not_called()
+
+    def test_publication_rechecks_version_after_successful_preflight(self):
+        publish.preflight()
+        self.release_exists = True
+        with self.assertRaisesRegex(ValueError, "already has a release"):
+            self.run_publish()
+        self.assertEqual(self.mutations, [])
+
     def test_same_source_existing_tag_is_allowed_without_moving_it(self):
         self.tag_exists = True
         self.run_publish()

@@ -1,0 +1,36 @@
+name: Canonical checks
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python3 -m pip install -r requirements-dev.txt
+      - name: Hermetic canonical regressions
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - name: Render, verify ownership, and lint generated workflows
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/generated-plugin"
+          python3 scripts/generate_plugin_pipeline.py --config templates/plugin-pipeline/example.json --output "$output"
+          python3 scripts/generate_plugin_pipeline.py --config templates/plugin-pipeline/example.json --output "$output" --check
+          python3 "$output/scripts/check_pipeline.py"
+          actionlint -shellcheck= "$output"/.github/workflows/*.yml

@@ -9,9 +9,10 @@ A comprehensive reference for building a 4D plugin from scratch in C/C++. This d
 **Canonical generated pipeline:** follow [Plugin pipeline generation](../../docs/plugin-pipeline.md)
 and the tracked `templates/plugin-pipeline` source. Generate and check the pipeline
 with `scripts/generate_plugin_pipeline.py`; do not hand-author workflow variants.
-Native plugins have exactly **Bump version**,
-**Build and Test**, and **Build and Release** workflows. Component CI/Publish
-conventions are not native-plugin conventions.
+Read [SKILL.md](../../SKILL.md) as the canonical agent entrypoint.
+The two release-facing actions are **Bump version** and **Build**, with separate
+unsigned **Build and Test** checks. These naming/role conventions are shared
+with components; plugin `vVERSION` tags and native packaging remain distinct.
 
 ---
 
@@ -1057,8 +1058,9 @@ defines **Bump version**: manual default-branch dispatch, `patch`/`minor`/`major
 selector, and a validated `VERSION` commit without a tag.
 
 [`release.yml.in`](../../templates/plugin-pipeline/release.yml.in) defines
-**Build and Release**: explicit release dispatch from the default branch, no
-inputs, same-revision reusable tests, signing/notarization, final package
+**Build**: explicit release dispatch from the default branch, no
+inputs, read-only source/version/release/tag preflight before native work,
+same-revision reusable tests, signing/notarization, final package
 acceptance, and verified draft publication. It creates `vVERSION` only at
 publication. No PAT or tag-event chaining is required.
 
@@ -1274,13 +1276,13 @@ live-backend host acceptance and packaged-host smoke tests. Require exit status
 
 ## CI/CD
 
-This project uses the canonical generated three-workflow native-plugin pipeline:
+The release-facing actions are **Bump version** and **Build**; unsigned checks are separate:
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | `test.yml` | Push / PR / manual / reusable | Build, test and validate same-revision artifacts |
 | `bump-version.yml` | Manual, default branch only | Bump `VERSION` and commit; no tag |
-| `release.yml` | Manual, default branch only; no inputs | Reuse tests, sign, notarize, verify, draft and publish `vVERSION` |
+| `release.yml` (**Build**) | Manual, default branch only; no inputs | Preflight immutable source/version/release/tag, reuse tests, sign, notarize, verify, draft and publish `vVERSION` |
 
 ### Required Secrets (for `release.yml` only)
 

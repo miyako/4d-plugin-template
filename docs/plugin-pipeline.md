@@ -10,19 +10,35 @@ read-only. The credential setup source is tutorial PR #17, commit `b648aed`.
 Reference updates require an explicit contract review, not a floating download
 of another repository's workflows.
 
-## Three workflows
+## Two release actions and separate unsigned checks
 
 | Display name | File | Events and behavior |
 |---|---|---|
 | Bump version | `bump-version.yml` | Manual default-branch dispatch; `mode` is patch/minor/major, default patch. Validate and commit `VERSION`; no tag or release dispatch. |
 | Build and Test | `test.yml` | Push, pull request, manual dispatch, reusable workflow. Build/test both platforms and validate same-run combined-package inputs. |
-| Build and Release | `release.yml` | Manual default-branch dispatch, no inputs. Invoke `test.yml`, assemble, sign/notarize, verify, smoke-test, then publish verified draft bytes as `vVERSION`. |
+| Build | `release.yml` | Manual default-branch dispatch, no inputs. Preflight immutable source and version availability, invoke `test.yml`, assemble, sign/notarize, verify, smoke-test, then publish verified draft bytes as `vVERSION`. |
 
 `VERSION` is the only version source. A bump does not start a release. Dispatch
 release on the new revision; rerunning an old run still uses its original SHA.
 The automatic GitHub token is sufficient: no PAT or tag-event chaining is
 required. Repository rules must permit the bump to push to the default branch;
 otherwise update `VERSION` through a reviewed PR.
+
+**Bump version** and **Build** are the common release-facing names and roles.
+The separate **Build and Test** workflow is safe unsigned validation, not a third
+release action. The existing filenames remain stable for consumers.
+Plugin tags retain the `v` prefix; component-specific `X.Y.Z` tag rules do not
+change plugin tags. Build never accepts a copied version/tag/bump input or
+checks out a moving branch instead of its selected immutable dispatch SHA.
+
+The authorization job runs `scripts/publish_release.py --preflight` before
+either native job can start. It checks clean source, immutable `HEAD:VERSION`,
+SDK gitlink, dispatch SHA, default branch, existing releases and conflicting
+tags using read-only API calls. API failures stop the build. A same-SHA orphan
+tag is allowed, but an existing release (including a draft) is never reused.
+Publication repeats these checks to cover changes since preflight and creates
+the tag only after final distribution acceptance. No releases/assets are
+overwritten and no tags are moved.
 
 Normal builds have read-only contents permission and no signing secrets.
 Signing runs in the configured release environment; within the release workflow,
@@ -70,6 +86,13 @@ change must generate these files, add `VERSION` and a `BNDL` Info.plist template
 wire CMake bundle versions to `VERSION`, and preserve greeting test behavior.
 Do not claim example synchronization until its actual source and generated
 files pass the same checks.
+
+Read [SKILL.md](../SKILL.md) as the agent entrypoint. A consumer using this source
+as a submodule must pin a reviewed commit and explicitly point its root
+`AGENTS.md` to `<canonical-submodule>/SKILL.md`; do not rely on nested instruction
+discovery. Run generation and `--check` from that pinned source. Keep tutorial
+code and teaching prose outside generated ownership. Do not reuse a renamed
+repository's old public name: pinned submodule URLs may depend on its redirect.
 
 The source-level migration overlay is tracked in `templates/example-overlay`,
 not merely described in this guide. Prepare the separate example delivery
@@ -375,7 +398,7 @@ that run ID, wait with a deadline, then retrieve consolidated results; do not
 poll repeatedly, invent status commands or automatically merge/retry/release.
 The read-only release verification helper never dispatches or publishes.
 
-After dispatching **Build and Release**, check that the run's `headSha` is the commit
+After dispatching **Build**, check that the run's `headSha` is the commit
 you meant to release before waiting on it. A dispatch sent right after `git push` can
 resolve the branch to the previous commit:
 
@@ -406,7 +429,7 @@ After an authorized production release succeeds, refresh download/install
 guidance, directly related translations and qualification evidence in the same
 documentation change. Remove stale permanent "no release published" notices,
 but retain still-unqualified cases. This checklist is not publication permission
-and adds no workflow to **Bump version / Build and Test / Build and Release**.
+and adds no release action beyond **Bump version / Build**; unsigned checks stay separate.
 
 1. Verify the public release's tag/source, `draft:false`, `prerelease` status and
    actual assets. A successful draft-creation step is not public publication.

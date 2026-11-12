@@ -165,6 +165,10 @@ def assert_contract(workflows, action, contract, config):
     assert release["on"]["workflow_dispatch"] in ("", None)
     for line in guard:
         assert line in named(release, "authorize", "Require an explicit default-branch dispatch")["run"]
+    preflight = named(release, "authorize", "Preflight immutable source and release availability")
+    assert preflight["run"] == "python3 scripts/publish_release.py --preflight"
+    assert preflight["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    assert steps(release, "authorize")[-1] == preflight
     expected_if = (
         f"github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/{branch}'"
     )
@@ -264,7 +268,8 @@ class PipelineGenerationTests(unittest.TestCase):
             "bump-version.yml.in", "test.yml.in", "release.yml.in", "tool4d-test.action.yml.in",
         })
         self.assertEqual(len(parsed(self.rendered())), 3)
-        self.assertFalse(list((ROOT / ".github/workflows").glob("*.yml")))
+        self.assertEqual({p.name for p in (ROOT / ".github/workflows").glob("*.yml")},
+                         {"canonical-checks.yml"})
         self.assertFalse(list((ROOT / ".github/workflows").glob("*.yaml")))
 
     def test_deterministic_idempotent_and_check(self):

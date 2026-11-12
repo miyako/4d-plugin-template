@@ -47,8 +47,8 @@ def api(endpoint, optional=False, **fields):
     return data
 
 
-def publish(directory, output):
-    directory, output = Path(directory).absolute(), Path(output).absolute()
+def preflight():
+    """Read-only authorization and version availability, repeated at publication."""
     settings, binding = package.config(), package.snapshot()
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
@@ -59,17 +59,10 @@ def publish(directory, output):
         raise PublicationError("Publication requires the explicit configured-branch dispatch SHA")
     if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", binding["version"]):
         raise PublicationError("Publication requires a numeric semantic VERSION")
-    draft = directory.parent / ".draft-upload-check"
-    extracted = directory.parent / ".draft-extracted"
-    for path in (draft, extracted):
-        package.no_symlink_path(path)
-        if path.exists():
-            raise PublicationError(f"Draft verification output already exists: {path}")
     # Confirm default-branch authorization against repository metadata, not a caller's input.
     repository_data = api(f"repos/{repository}")
     if repository_data.get("default_branch") != settings["release_branch"]:
         raise PublicationError("Configured release branch is not the repository default branch")
-    verify_distribution.verify_distribution(directory, output)
     tag = "v" + binding["version"]
     if api(f"repos/{repository}/releases/tags/{tag}", optional=True) is not None:
         raise PublicationError("Version already has a release; refusing to replace or reuse it")
@@ -77,7 +70,20 @@ def publish(directory, output):
     if remote_ref is not None:
         if api(f"repos/{repository}/commits/{tag}").get("sha") != binding["source_commit"]:
             raise PublicationError("Existing version tag points to another source commit")
-    else:
+    return repository, binding, tag, remote_ref
+
+
+def publish(directory, output):
+    directory, output = Path(directory).absolute(), Path(output).absolute()
+    repository, binding, tag, remote_ref = preflight()
+    draft = directory.parent / ".draft-upload-check"
+    extracted = directory.parent / ".draft-extracted"
+    for path in (draft, extracted):
+        package.no_symlink_path(path)
+        if path.exists():
+            raise PublicationError(f"Draft verification output already exists: {path}")
+    verify_distribution.verify_distribution(directory, output)
+    if remote_ref is None:
         api(f"repos/{repository}/git/refs", ref=f"refs/tags/{tag}", sha=binding["source_commit"])
     notes = (
         f"Source commit: `{binding['source_commit']}`\n\n"
@@ -100,11 +106,20 @@ def publish(directory, output):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--directory", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--preflight", action="store_true", help="Read-only checks before native work")
+    parser.add_argument("--directory", type=Path)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
+    if args.preflight and (args.directory or args.output):
+        parser.error("--preflight cannot publish a distribution")
+    if not args.preflight and (args.directory is None or args.output is None):
+        parser.error("publication requires --directory and --output")
     try:
-        result = publish(args.directory, args.output)
+        if args.preflight:
+            repository, binding, tag, _ = preflight()
+            result = {"repository": repository, "tag": tag, **binding, "preflight_verified": True}
+        else:
+            result = publish(args.directory, args.output)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"publish: {error}\n")
     print(json.dumps(result, sort_keys=True))

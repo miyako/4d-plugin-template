@@ -59,6 +59,7 @@ def prepare(source_ref, output):
     files["example/Info.plist.in"] = (overlay / "Info.plist.in").read_bytes()
     files["VERSION"] = (overlay / "VERSION").read_bytes()
     for name in (
+            "AGENTS.md", "SKILL.md",
             ".github/instructions/plugin-dev.instructions.md", "docs/plugin-pipeline.md",
             "scripts/set-release-secrets.sh", "scripts/tests/test_release_secrets.py"):
         files[name] = (ROOT / name).read_bytes()
@@ -66,8 +67,10 @@ def prepare(source_ref, output):
         "\n\n## Canonical pipeline\n\n"
         "This runnable scaffold consumes the tutorial main branch's "
         "[canonical pipeline](docs/plugin-pipeline.md). Its three generated workflows "
-        "are Bump version, Build and Test, and Build and Release. Bumps commit "
+        "provide two release actions, Bump version and Build, plus separate unsigned "
+        "Build and Test checks. Bumps commit "
         "VERSION without tagging; release is explicitly dispatched from main and "
+        "preflights immutable source/version/release/tag before native work and "
         "publishes vVERSION only after package acceptance. Regenerate through "
         "the canonical tutorial generator; do not hand-edit the pipeline.\n"
     ).encode("utf-8")
