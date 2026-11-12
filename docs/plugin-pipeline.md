@@ -10,19 +10,40 @@ read-only. The credential setup source is tutorial PR #17, commit `b648aed`.
 Reference updates require an explicit contract review, not a floating download
 of another repository's workflows.
 
-## Three workflows
+The release-facing naming and roles follow the
+[cURL simplification at `e2ce760`](https://github.com/miyako/4d-plugin-curl-v3/commit/e2ce760e3cb443e8c6e2a65aeb4dd3d426aacaa6).
+This changes the UX, not the stronger native acceptance gates inherited from
+the packaging reference.
+
+## Two release actions and separate unsigned checks
 
 | Display name | File | Events and behavior |
 |---|---|---|
 | Bump version | `bump-version.yml` | Manual default-branch dispatch; `mode` is patch/minor/major, default patch. Validate and commit `VERSION`; no tag or release dispatch. |
 | Build and Test | `test.yml` | Push, pull request, manual dispatch, reusable workflow. Build/test both platforms and validate same-run combined-package inputs. |
-| Build and Release | `release.yml` | Manual default-branch dispatch, no inputs. Invoke `test.yml`, assemble, sign/notarize, verify, smoke-test, then publish verified draft bytes as `vVERSION`. |
+| Build | `release.yml` | Manual default-branch dispatch, no inputs. Preflight immutable source and version availability, invoke `test.yml`, assemble, sign/notarize, verify, smoke-test, then publish verified draft bytes as `vVERSION`. |
 
 `VERSION` is the only version source. A bump does not start a release. Dispatch
 release on the new revision; rerunning an old run still uses its original SHA.
 The automatic GitHub token is sufficient: no PAT or tag-event chaining is
 required. Repository rules must permit the bump to push to the default branch;
 otherwise update `VERSION` through a reviewed PR.
+
+**Bump version** and **Build** are the common release-facing names and roles.
+The separate **Build and Test** workflow is safe unsigned validation, not a third
+release action. The existing filenames remain stable for consumers.
+Plugin tags retain the `v` prefix; component-specific `X.Y.Z` tag rules do not
+change plugin tags. Build never accepts a copied version/tag/bump input or
+checks out a moving branch instead of its selected immutable dispatch SHA.
+
+The authorization job runs `scripts/publish_release.py --preflight` before
+either native job can start. It checks clean source, immutable `HEAD:VERSION`,
+SDK gitlink, dispatch SHA, default branch, existing releases and conflicting
+tags using read-only API calls. API failures stop the build. A same-SHA orphan
+tag is allowed, but an existing release (including a draft) is never reused.
+Publication repeats these checks to cover changes since preflight and creates
+the tag only after final distribution acceptance. No releases/assets are
+overwritten and no tags are moved.
 
 Normal builds have read-only contents permission and no signing secrets.
 Signing runs in the configured release environment; within the release workflow,
@@ -47,10 +68,18 @@ python3 scripts/generate_plugin_pipeline.py \
 ```
 
 The generated repository contains `.github/plugin-pipeline.json`, exactly the
-three workflow files, the parameterized tool4d action, and required tracked
+three managed workflow files, the parameterized tool4d action, and required tracked
 helpers/tests. Generation is deterministic and refuses conflicting outputs;
 `--check` detects drift without writing. Do not patch generated workflow logic
 per project; change canonical source/configuration and validate it first.
+
+An optional `consumer_workflows` configuration field lists sorted, unique
+additional workflow basenames, for example `["pipeline-drift.yml"]`. These
+explicitly declared files remain consumer-owned: generation never writes or
+hash-owns their content; `--check` and runtime ownership checks require them to
+exist as regular files, and undeclared workflows still fail. Use such a safe
+workflow to initialize the canonical submodule and check generation against its
+exact pin before native work. It must not bypass or duplicate release gates.
 
 For an owned pipeline, `--update-managed` replaces only files whose current
 bytes still match `.github/plugin-pipeline-generated.json`; hand-edited or
@@ -70,6 +99,42 @@ change must generate these files, add `VERSION` and a `BNDL` Info.plist template
 wire CMake bundle versions to `VERSION`, and preserve greeting test behavior.
 Do not claim example synchronization until its actual source and generated
 files pass the same checks.
+
+Read [SKILL.md](../SKILL.md) as the agent entrypoint. A consumer using this source
+as a submodule must pin a reviewed commit and explicitly point its root
+`AGENTS.md` to `<canonical-submodule>/SKILL.md`; do not rely on nested instruction
+discovery. Run generation and `--check` from that pinned source. Keep tutorial
+code and teaching prose outside generated ownership. Do not reuse a renamed
+repository's old public name: pinned submodule URLs may depend on its redirect.
+
+### Repository identity and submodule compatibility
+
+The canonical repository is now
+[`miyako/4d-plugin-template`](https://github.com/miyako/4d-plugin-template)
+(repository ID `1332500798`). It retains the existing history, branches, tags,
+paths and PRs from `miyako/4d-plugin-tutorial`. The old tutorial name must remain
+unused so existing Git clone/fetch/submodule URLs redirect to this same
+repository and historic pins remain available. New consumers should use the
+explicit canonical URL. Never delete refs or rewrite history as migration.
+
+The separate worked tutorial is
+[`miyako/4d-plugin-example`](https://github.com/miyako/4d-plugin-example).
+It consumes a published immutable canonical commit; an unmerged PR pin is not
+proof that canonical `main` contains those changes.
+
+The unrelated obsolete text generator was renamed by its owner to
+[`miyako/4d-plugin-scaffolding`](https://github.com/miyako/4d-plugin-scaffolding)
+(repository ID `195597409`) and remains archived. Reusing its old
+`4d-plugin-template` name for this canonical repository removes that obsolete
+generator's old-name redirect; consumers of the obsolete generator must use
+the scaffolding URL. Its history was not replaced or deleted.
+
+[GitHub's rename rules](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository)
+distinguish Git redirects from Actions: remote `uses: OWNER/REPO/...@REF`
+references do not redirect and must be updated explicitly. A bounded public
+code search found no indexed references to the old tutorial URL in
+`.gitmodules` or `.github/workflows`; that is not evidence that private,
+unindexed or other consumers do not exist. Preserve compatibility regardless.
 
 The source-level migration overlay is tracked in `templates/example-overlay`,
 not merely described in this guide. Prepare the separate example delivery
@@ -375,7 +440,7 @@ that run ID, wait with a deadline, then retrieve consolidated results; do not
 poll repeatedly, invent status commands or automatically merge/retry/release.
 The read-only release verification helper never dispatches or publishes.
 
-After dispatching **Build and Release**, check that the run's `headSha` is the commit
+After dispatching **Build**, check that the run's `headSha` is the commit
 you meant to release before waiting on it. A dispatch sent right after `git push` can
 resolve the branch to the previous commit:
 
@@ -406,7 +471,7 @@ After an authorized production release succeeds, refresh download/install
 guidance, directly related translations and qualification evidence in the same
 documentation change. Remove stale permanent "no release published" notices,
 but retain still-unqualified cases. This checklist is not publication permission
-and adds no workflow to **Bump version / Build and Test / Build and Release**.
+and adds no release action beyond **Bump version / Build**; unsigned checks stay separate.
 
 1. Verify the public release's tag/source, `draft:false`, `prerelease` status and
    actual assets. A successful draft-creation step is not public publication.

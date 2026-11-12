@@ -165,6 +165,10 @@ def assert_contract(workflows, action, contract, config):
     assert release["on"]["workflow_dispatch"] in ("", None)
     for line in guard:
         assert line in named(release, "authorize", "Require an explicit default-branch dispatch")["run"]
+    preflight = named(release, "authorize", "Preflight immutable source and release availability")
+    assert preflight["run"] == "python3 scripts/publish_release.py --preflight"
+    assert preflight["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    assert steps(release, "authorize")[-1] == preflight
     expected_if = (
         f"github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/{branch}'"
     )
@@ -264,7 +268,8 @@ class PipelineGenerationTests(unittest.TestCase):
             "bump-version.yml.in", "test.yml.in", "release.yml.in", "tool4d-test.action.yml.in",
         })
         self.assertEqual(len(parsed(self.rendered())), 3)
-        self.assertFalse(list((ROOT / ".github/workflows").glob("*.yml")))
+        self.assertEqual({p.name for p in (ROOT / ".github/workflows").glob("*.yml")},
+                         {"canonical-checks.yml"})
         self.assertFalse(list((ROOT / ".github/workflows").glob("*.yaml")))
 
     def test_deterministic_idempotent_and_check(self):
@@ -315,6 +320,30 @@ class PipelineGenerationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unexpected workflows"):
             generator.generate(self.config, self.output, root=self.fixture)
         self.assertFalse((self.output / ".github/workflows/test.yml").exists())
+
+    def test_declared_consumer_workflow_is_preserved_and_required_by_check(self):
+        config = {**self.config, "consumer_workflows": ["pipeline-drift.yml"]}
+        path = self.output / ".github/workflows/pipeline-drift.yml"
+        path.parent.mkdir(parents=True)
+        path.write_text("name: Consumer checks\n")
+        generated = generator.generate(config, self.output, root=self.fixture)
+        self.assertNotIn(".github/workflows/pipeline-drift.yml", generated)
+        path.write_text("name: Consumer-owned updated checks\n")
+        generator.generate(config, self.output, root=self.fixture, check=True)
+        self.assertEqual(path.read_text(), "name: Consumer-owned updated checks\n")
+        path.unlink()
+        with self.assertRaisesRegex(ValueError, "Consumer workflow missing"):
+            generator.generate(config, self.output, root=self.fixture, check=True)
+        path.symlink_to(self.fixture / "templates/plugin-pipeline/test.yml.in")
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            generator.generate(config, self.output, root=self.fixture)
+
+    def test_invalid_consumer_workflow_config_rejected(self):
+        for value in (None, "checks.yml", ["test.yml"], ["../checks.yml"],
+                      ["checks.yml", "checks.yml"], ["z.yml", "a.yml"],
+                      ["UPPER.yml"], ["checks.txt"], [{}]):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                generator.render({**self.config, "consumer_workflows": value}, root=self.fixture)
 
     def test_symlinks_refused(self):
         self.output.mkdir()

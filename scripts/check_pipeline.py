@@ -73,10 +73,21 @@ def check(root=ROOT):
                         ("contract_sha256", ".github/plugin-pipeline-contract.json")):
         if manifest[field] != expected[name]:
             raise ValueError(f"Invalid {field}")
+    config = json.loads((root / ".github/plugin-pipeline.json").read_bytes(), object_pairs_hook=object_pairs)
+    consumer = config.get("consumer_workflows", [])
+    if (not isinstance(consumer, list)
+            or any(not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*\.ya?ml", name)
+                   or name in WORKFLOWS for name in consumer)
+            or consumer != sorted(set(consumer))):
+        raise ValueError("Invalid consumer_workflows")
+    for name in consumer:
+        path = root / ".github/workflows" / name
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"Consumer workflow must be a regular file: {name}")
     actual = {path.name for path in (root / ".github/workflows").iterdir()
               if path.suffix in (".yaml", ".yml")}
-    if actual != WORKFLOWS:
-        raise ValueError("Generated plugins must have exactly the three canonical workflows")
+    if actual != WORKFLOWS | set(consumer):
+        raise ValueError("Generated plugins must have exactly the three canonical workflows and declared consumer workflows")
     return len(expected)
 
 

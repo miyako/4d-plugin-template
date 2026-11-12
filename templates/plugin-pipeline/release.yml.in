@@ -1,4 +1,4 @@
-name: Build and Release
+name: Build
 
 on:
   workflow_dispatch:
@@ -29,6 +29,10 @@ jobs:
           [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]
           [ "$DEFAULT_BRANCH" = '@@RELEASE_BRANCH@@' ]
           [ "$GITHUB_REF" = 'refs/heads/@@RELEASE_BRANCH@@' ]
+      - name: Preflight immutable source and release availability
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/publish_release.py --preflight
   build:
     needs: authorize
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/@@RELEASE_BRANCH@@'

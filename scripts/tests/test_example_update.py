@@ -34,6 +34,8 @@ class ExampleUpdateTests(unittest.TestCase):
             self.assertIn("BNDL", (output / "example/Info.plist.in").read_text())
             for name in ("scripts/set-release-secrets.sh", "scripts/tests/test_release_secrets.py"):
                 self.assertEqual((output / name).read_bytes(), (ROOT / name).read_bytes())
+            for name in ("AGENTS.md", "SKILL.md"):
+                self.assertEqual((output / name).read_bytes(), (ROOT / name).read_bytes())
 
     def test_existing_output_is_never_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:

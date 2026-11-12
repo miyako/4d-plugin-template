@@ -1,5 +1,6 @@
 """Offline checks for the canonical guide and source-level example migration."""
 
+import json
 from pathlib import Path
 import plistlib
 import unittest
@@ -9,6 +10,20 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class GuidanceTests(unittest.TestCase):
+    def test_release_names_and_skill_entrypoint_are_consistent(self):
+        skill = (ROOT / "SKILL.md").read_text()
+        self.assertTrue(skill.startswith("---\nname: native-plugin-pipeline\n"))
+        for name in ("AGENTS.md", "README.md", ".github/instructions/plugin-dev.instructions.md"):
+            self.assertIn("SKILL.md", (ROOT / name).read_text())
+        for name in ("SKILL.md", "README.md", "docs/plugin-pipeline.md",
+                     ".github/instructions/plugin-dev.instructions.md"):
+            text = (ROOT / name).read_text()
+            self.assertIn("**Bump version**", text)
+            self.assertIn("**Build**", text)
+            self.assertNotIn("Build and Release", text)
+        contract = json.loads((ROOT / "templates/plugin-pipeline/contract.json").read_text())
+        self.assertEqual(contract["workflows"]["release.yml"]["name"], "Build")
+
     def test_current_contract_has_no_competing_inline_workflows(self):
         guide = (ROOT / ".github/instructions/plugin-dev.instructions.md").read_text()
         self.assertLess(guide.index("Canonical generated pipeline"), guide.index("## Table of Contents"))

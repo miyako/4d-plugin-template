@@ -39,6 +39,9 @@ jobs:
           MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
+          [ -z "$(git status --porcelain --untracked-files=normal)" ]
+          python3 -c 'from pathlib import Path; import re; data = Path("VERSION").read_bytes(); assert re.fullmatch(rb"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\n", data), "VERSION must be one LF-terminated numeric semantic version"'
           CURRENT=$(cat VERSION)
           [[ "$CURRENT" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
@@ -66,4 +69,4 @@ jobs:
         env:
           VERSION: ${{ steps.bump.outputs.version }}
         run: |
-          echo "Bumped VERSION to $VERSION. Dispatch Build and Release from @@RELEASE_BRANCH@@ to publish v$VERSION." >> "$GITHUB_STEP_SUMMARY"
+          echo "Bumped VERSION to $VERSION. Dispatch Build from @@RELEASE_BRANCH@@ to publish v$VERSION." >> "$GITHUB_STEP_SUMMARY"
