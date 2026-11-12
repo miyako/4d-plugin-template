@@ -78,7 +78,14 @@ def config():
               "startup_method", "sdk_dir", "bundle_identifier", "macos_deployment_target",
               "release_branch", "signing_environment", "profile", "signing_policy",
               "native_tests", "dependencies"}
-    require(isinstance(data, dict) and set(data) == fields, "Invalid pipeline config fields")
+    require(isinstance(data, dict) and fields.issubset(data)
+            and not set(data) - fields - {"consumer_workflows"}, "Invalid pipeline config fields")
+    consumer = data.get("consumer_workflows", [])
+    require(isinstance(consumer, list)
+            and all(isinstance(name, str) and re.fullmatch(r"[a-z][a-z0-9_-]*\.ya?ml", name)
+                    and name not in ("bump-version.yml", "test.yml", "release.yml")
+                    for name in consumer)
+            and consumer == sorted(set(consumer)), "Invalid consumer_workflows")
     require(type(data["schema"]) is int and data["schema"] == 1, "Unsupported config schema")
     require(data["profile"] == "macos-universal-windows-x64", "Unsupported profile")
     require(data["signing_policy"] == "developer-id", "Unsupported signing policy")

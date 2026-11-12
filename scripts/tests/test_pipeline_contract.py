@@ -73,6 +73,27 @@ class PipelineContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             checks.check(self.root)
 
+    def test_declared_consumer_workflows_are_required_but_not_hash_owned(self):
+        config_name = ".github/plugin-pipeline.json"
+        config_path = self.root / config_name
+        config_path.write_text(json.dumps({"schema": 1, "consumer_workflows": ["pipeline-drift.yml"]}))
+        manifest_path = self.root / checks.MANIFEST
+        manifest = json.loads(manifest_path.read_bytes())
+        manifest["files"][config_name] = checks.digest(config_path.read_bytes())
+        manifest["config_sha256"] = manifest["files"][config_name]
+        manifest_path.write_text(json.dumps(manifest))
+        path = self.root / ".github/workflows/pipeline-drift.yml"
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            checks.check(self.root)
+        path.write_text("name: Consumer checks\n")
+        checks.check(self.root)
+        path.write_text("name: Consumer-owned revision\n")
+        checks.check(self.root)
+        path.unlink()
+        path.symlink_to(config_path)
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            checks.check(self.root)
+
     def test_symlink_outputs_fail(self):
         path = self.root / ".github/workflows/test.yml"
         path.unlink()

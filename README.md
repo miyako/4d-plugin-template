@@ -4,7 +4,7 @@ English | [日本語](README.ja.md)
 
 Start with the canonical [agent skill](SKILL.md) and
 [pipeline generation guide](docs/plugin-pipeline.md).
-The historical [example](https://github.com/miyako/4d-plugin-tutorial/tree/example)
+The historical [example](https://github.com/miyako/4d-plugin-template/tree/example)
 branch is not synchronized with this contract; do not copy its release recipes.
 
 Canonical [plugin development guidance](.github/instructions/plugin-dev.instructions.md#required-github-secrets-for-release) includes release-credential setup with the bundled user-run `scripts/set-release-secrets.sh` helper.
@@ -21,3 +21,8 @@ the older `miyako-4d-plugin-tutorial` branch is historical, not a generation sou
 
 The **Canonical checks** workflow tests/lints this source repository without
 building, signing or publishing plugins.
+
+The worked tutorial lives in [4d-plugin-example](https://github.com/miyako/4d-plugin-example)
+and pins this canonical source as a submodule. See the
+[repository compatibility notes](docs/plugin-pipeline.md#repository-identity-and-submodule-compatibility)
+before changing repository names or consumer URLs.

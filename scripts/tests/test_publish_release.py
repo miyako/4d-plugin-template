@@ -118,6 +118,24 @@ class PublicationTests(unittest.TestCase):
             self.run_publish()
         self.assertEqual(self.mutations, [])
 
+    def test_preflight_cli_cannot_accept_publication_paths(self):
+        for args in (["--preflight", "--directory", str(self.directory)],
+                     ["--preflight", "--output", str(self.root / "output")],
+                     ["--directory", str(self.directory)], []):
+            with self.subTest(args=args), patch.object(sys, "stderr"):
+                with self.assertRaises(SystemExit) as error:
+                    publish.main(args)
+                self.assertEqual(error.exception.code, 2)
+        self.assertEqual(self.mutations, [])
+
+    def test_preflight_cli_reports_source_without_publication(self):
+        with patch("builtins.print") as output:
+            publish.main(["--preflight"])
+        self.assertIn('"preflight_verified": true', output.call_args.args[0])
+        self.assertIn(SOURCE, output.call_args.args[0])
+        self.assertEqual(self.mutations, [])
+        self.verify.assert_not_called()
+
     def test_same_source_existing_tag_is_allowed_without_moving_it(self):
         self.tag_exists = True
         self.run_publish()

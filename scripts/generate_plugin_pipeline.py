@@ -129,8 +129,16 @@ def ownership(files):
 
 
 def validate_config(config):
-    if not isinstance(config, dict) or set(config) != FIELDS:
+    if (not isinstance(config, dict) or not FIELDS.issubset(config)
+            or set(config) - FIELDS - {"consumer_workflows"}):
         raise ValueError("Configuration must contain exactly the schema-1 fields")
+    consumer = config.get("consumer_workflows", [])
+    if (not isinstance(consumer, list)
+            or any(not isinstance(name, str)
+                   or not re.fullmatch(r"[a-z][a-z0-9_-]*\.ya?ml", name)
+                   or f".github/workflows/{name}" in LEGACY_WORKFLOWS for name in consumer)
+            or consumer != sorted(set(consumer))):
+        raise ValueError("consumer_workflows must be sorted unique noncanonical workflow basenames")
     if type(config["schema"]) is not int or config["schema"] != 1:
         raise ValueError("Unsupported schema")
     if type(config["native_tests"]) is not bool:
@@ -454,10 +462,17 @@ def generate(config, output, check=False, root=ROOT, update_managed=False,
         if check and not target.is_file():
             raise ValueError(f"Generated file missing: {name}")
     workflows = output / ".github" / "workflows"
+    consumer = set(config.get("consumer_workflows", []))
+    for name in consumer:
+        path = workflows / name
+        if path.is_symlink() or path.exists() and not path.is_file():
+            raise ValueError(f"Consumer workflow must be a regular file: {name}")
+        if check and not path.is_file():
+            raise ValueError(f"Consumer workflow missing: {name}")
     if workflows.exists():
         extras = [path.name for path in workflows.iterdir()
                   if path.suffix in (".yml", ".yaml")
-                  and f".github/workflows/{path.name}" not in files]
+                  and f".github/workflows/{path.name}" not in files and path.name not in consumer]
         if extras:
             raise ValueError("Unexpected workflows: " + ", ".join(sorted(extras)))
     if not check:

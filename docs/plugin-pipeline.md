@@ -10,6 +10,11 @@ read-only. The credential setup source is tutorial PR #17, commit `b648aed`.
 Reference updates require an explicit contract review, not a floating download
 of another repository's workflows.
 
+The release-facing naming and roles follow the
+[cURL simplification at `e2ce760`](https://github.com/miyako/4d-plugin-curl-v3/commit/e2ce760e3cb443e8c6e2a65aeb4dd3d426aacaa6).
+This changes the UX, not the stronger native acceptance gates inherited from
+the packaging reference.
+
 ## Two release actions and separate unsigned checks
 
 | Display name | File | Events and behavior |
@@ -63,10 +68,18 @@ python3 scripts/generate_plugin_pipeline.py \
 ```
 
 The generated repository contains `.github/plugin-pipeline.json`, exactly the
-three workflow files, the parameterized tool4d action, and required tracked
+three managed workflow files, the parameterized tool4d action, and required tracked
 helpers/tests. Generation is deterministic and refuses conflicting outputs;
 `--check` detects drift without writing. Do not patch generated workflow logic
 per project; change canonical source/configuration and validate it first.
+
+An optional `consumer_workflows` configuration field lists sorted, unique
+additional workflow basenames, for example `["pipeline-drift.yml"]`. These
+explicitly declared files remain consumer-owned: generation never writes or
+hash-owns their content; `--check` and runtime ownership checks require them to
+exist as regular files, and undeclared workflows still fail. Use such a safe
+workflow to initialize the canonical submodule and check generation against its
+exact pin before native work. It must not bypass or duplicate release gates.
 
 For an owned pipeline, `--update-managed` replaces only files whose current
 bytes still match `.github/plugin-pipeline-generated.json`; hand-edited or
@@ -93,6 +106,35 @@ as a submodule must pin a reviewed commit and explicitly point its root
 discovery. Run generation and `--check` from that pinned source. Keep tutorial
 code and teaching prose outside generated ownership. Do not reuse a renamed
 repository's old public name: pinned submodule URLs may depend on its redirect.
+
+### Repository identity and submodule compatibility
+
+The canonical repository is now
+[`miyako/4d-plugin-template`](https://github.com/miyako/4d-plugin-template)
+(repository ID `1332500798`). It retains the existing history, branches, tags,
+paths and PRs from `miyako/4d-plugin-tutorial`. The old tutorial name must remain
+unused so existing Git clone/fetch/submodule URLs redirect to this same
+repository and historic pins remain available. New consumers should use the
+explicit canonical URL. Never delete refs or rewrite history as migration.
+
+The separate worked tutorial is
+[`miyako/4d-plugin-example`](https://github.com/miyako/4d-plugin-example).
+It consumes a published immutable canonical commit; an unmerged PR pin is not
+proof that canonical `main` contains those changes.
+
+The unrelated obsolete text generator was renamed by its owner to
+[`miyako/4d-plugin-scaffolding`](https://github.com/miyako/4d-plugin-scaffolding)
+(repository ID `195597409`) and remains archived. Reusing its old
+`4d-plugin-template` name for this canonical repository removes that obsolete
+generator's old-name redirect; consumers of the obsolete generator must use
+the scaffolding URL. Its history was not replaced or deleted.
+
+[GitHub's rename rules](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository)
+distinguish Git redirects from Actions: remote `uses: OWNER/REPO/...@REF`
+references do not redirect and must be updated explicitly. A bounded public
+code search found no indexed references to the old tutorial URL in
+`.gitmodules` or `.github/workflows`; that is not evidence that private,
+unindexed or other consumers do not exist. Preserve compatibility regardless.
 
 The source-level migration overlay is tracked in `templates/example-overlay`,
 not merely described in this guide. Prepare the separate example delivery

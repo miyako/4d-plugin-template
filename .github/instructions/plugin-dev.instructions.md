@@ -1097,7 +1097,7 @@ The `test.yml` and `bump-version.yml` templates do not require these signing sec
    gh secret list --repo OWNER/REPO
    ```
 
-2. If that workflow needs the six secrets, use the tracked [helper](../../scripts/set-release-secrets.sh) from the **tutorial checkout root**. It requires macOS, zsh, the `security` CLI, OpenSSL, and an authenticated GitHub CLI with permission to set repository secrets. No particular `~/.copilot` installation is needed.
+2. If that workflow needs the six secrets, use the tracked [helper](../../scripts/set-release-secrets.sh) from the **canonical template checkout root**. It requires macOS, zsh, the `security` CLI, OpenSSL, and an authenticated GitHub CLI with permission to set repository secrets. No particular `~/.copilot` installation is needed.
 
    For first-time setup with no stored certificate, export a **Developer ID Application certificate with its private key** as `.p12` from Keychain Access. The user chooses the file and its export password:
 
@@ -1723,7 +1723,7 @@ Given a plugin specification (name, commands, constants, behavior):
 - [ ] Check this tutorial for fixes not yet on `main` before generating:
       `git -C <tutorial> fetch -q && git -C <tutorial> branch -r --no-merged origin/main`.
       Commits pushed to a branch after its PR was merged never reach `main` (the
-      build-directory fix in miyako/4d-plugin-tutorial#24 was missed this way, and two plugins generated from
+      build-directory fix in miyako/4d-plugin-template#24 was missed this way, and two plugins generated from
       `main` failed at signing)
 - [ ] Generate the three workflows and required helpers from canonical pipeline configuration
 - [ ] Check generated files for drift; do not hand-author a competing pipeline
@@ -2126,7 +2126,7 @@ Expected: `isCompliant="true"`, `failedRules="0"`.
 3. **SDK `4DPluginAPI.c` needs warning suppression** on modern compilers (Pitfall #21)
 4. **`PA_GetUnistring`** is the correct function name, not `PA_GetUnistringPtr` (Pitfall #22)
 5. **catalog.4DCatalog** must have `base.dtd`, `name`, `uuid`, `DEFAULT_SCHEMA`, `journal_file` (Pitfall #19)
-6. **Generated CI:** Use the canonical three-workflow contract. Link PoDoFo
+6. **Generated CI:** Use the two release actions and separate unsigned checks. Link PoDoFo
    statically through the
    [static dependency profile](../../docs/plugin-pipeline.md#static-third-party-dependency-profile)
    (vcpkg on Windows), with notices and license acknowledgments; the baseline
@@ -2256,7 +2256,7 @@ no extra steps:
   Windows and `iconv` on macOS. Rust 1.78+ also imports `ProcessPrng` from
   `bcryptprimitives.dll` (System32, Windows 10+) through `raw-dylib`; it does not
   appear in that list. The staging allowlist accepts it from
-  miyako/4d-plugin-tutorial#21 on; before that, staging rejects every Rust plugin
+  miyako/4d-plugin-template#21 on; before that, staging rejects every Rust plugin
   with `Non-system Windows import: bcryptprimitives.dll`.
 - **Panics.** Unwinding across the C boundary aborts the host. Wrap every exported
   function in `std::panic::catch_unwind` and turn a panic into an error result.

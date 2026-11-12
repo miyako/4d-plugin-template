@@ -65,14 +65,14 @@ def prepare(source_ref, output):
         files[name] = (ROOT / name).read_bytes()
     files["README.md"] += (
         "\n\n## Canonical pipeline\n\n"
-        "This runnable scaffold consumes the tutorial main branch's "
+        "This runnable scaffold consumes the template repository's "
         "[canonical pipeline](docs/plugin-pipeline.md). Its three generated workflows "
         "provide two release actions, Bump version and Build, plus separate unsigned "
         "Build and Test checks. Bumps commit "
         "VERSION without tagging; release is explicitly dispatched from main and "
         "preflights immutable source/version/release/tag before native work and "
         "publishes vVERSION only after package acceptance. Regenerate through "
-        "the canonical tutorial generator; do not hand-edit the pipeline.\n"
+        "the canonical template generator; do not hand-edit the pipeline.\n"
     ).encode("utf-8")
     config = json.loads((ROOT / "templates/plugin-pipeline/example.json").read_text())
     # Render every canonical input before creating the output directory.

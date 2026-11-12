@@ -217,6 +217,17 @@ class PackageTests(Fixture):
             package.assemble(other / "inputs", other / "output")
             self.assertTrue((other / "output/payload/Sample.bundle/Contents/MacOS/Sample").exists())
 
+    def test_consumer_workflow_config_contract(self):
+        path = self.root / ".github/plugin-pipeline.json"
+        package.write_json(path, {**CONFIG, "consumer_workflows": ["pipeline-drift.yml"]})
+        self.assertEqual(package.config()["consumer_workflows"], ["pipeline-drift.yml"])
+        for value in (None, "checks.yml", ["test.yml"], ["../checks.yml"],
+                      ["checks.yml", "checks.yml"], ["z.yml", "a.yml"], [{}]):
+            with self.subTest(value=value):
+                package.write_json(path, {**CONFIG, "consumer_workflows": value})
+                with self.assertRaisesRegex(ValueError, "consumer_workflows"):
+                    package.config()
+
     def test_binding_rejected(self):
         path = self.inputs / "windows/manifest.json"
         original = package.read_json(path)
